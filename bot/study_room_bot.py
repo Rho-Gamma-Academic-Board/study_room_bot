@@ -737,7 +737,21 @@ def wait_for_possible_redirect(page, timeout_seconds: int = 5):
     return is_login_page(page)
 
 
-def ensure_logged_in(page, account, redirect_after_login=True):
+def wait_for_login_complete(page, timeout_seconds: int = 300) -> bool:
+    """Poll until SSO/login pages are finished."""
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if not is_login_page(page):
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=5000)
+            except Exception:
+                pass
+            return True
+        time.sleep(2)
+    return not is_login_page(page)
+
+
+def ensure_logged_in(page, account, redirect_after_login=True, interactive: bool = True):
     """
     If UCF SSO / Microsoft login appears:
     - If account credentials are set: fill them, submit, then handle 2FA.
@@ -750,9 +764,13 @@ def ensure_logged_in(page, account, redirect_after_login=True):
     print(f"Detected login page: {page.url} (account: {account.id})")
 
     if not (account.ucf_email and account.ucf_password):
-        print("Set UCF_EMAIL and UCF_PASSWORD for this account.")
-        print("Log in manually in the browser, then press Enter here to continue...")
-        wait_for_user()
+        if interactive:
+            print("Set UCF_EMAIL and UCF_PASSWORD for this account.")
+            print("Log in manually in the browser, then press Enter here to continue...")
+            wait_for_user()
+        elif not wait_for_login_complete(page):
+            print("Login timed out — finish sign-in and run ./sign-in.sh again.")
+            return
         if redirect_after_login:
             page.goto(BASE_URL, wait_until="networkidle")
         return
@@ -857,7 +875,11 @@ def ensure_logged_in(page, account, redirect_after_login=True):
         time.sleep(4)
     except Exception as e:
         print(f"Could not complete email/password step: {e}")
-        wait_for_user("Log in manually, then press Enter...")
+        if interactive:
+            wait_for_user("Log in manually, then press Enter...")
+        elif not wait_for_login_complete(page):
+            print("Login timed out — finish sign-in and run ./sign-in.sh again.")
+            return
         if redirect_after_login:
             page.goto(BASE_URL, wait_until="networkidle")
         return
@@ -924,7 +946,11 @@ def ensure_logged_in(page, account, redirect_after_login=True):
             print("Could not get 2FA code from iMessage.")
         else:
             print("Complete 2FA in the browser (enter the SMS code on the login page).")
-        wait_for_user("Press Enter when login is complete...")
+        if interactive:
+            wait_for_user("Press Enter when login is complete...")
+        elif not wait_for_login_complete(page):
+            print("2FA timed out — finish sign-in and run ./sign-in.sh again.")
+            return
 
     if redirect_after_login:
         page.goto(BASE_URL, wait_until="networkidle")

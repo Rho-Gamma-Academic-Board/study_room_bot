@@ -15,16 +15,11 @@ random_nickname() {
 }
 
 if [[ -z "$ACCOUNT_ID" ]]; then
-  echo
-  echo "Add a UCF account. You'll need:"
-  echo "  • UCF email, password, and ID"
-  echo "  • A nickname (anything — doesn't have to be a real name)"
-  echo "  • Browser access for SMS 2FA during sign-in"
-  echo
+  printf '\n'
   read -r -p "Nickname (Enter for random): " ACCOUNT_ID
   if [[ -z "$ACCOUNT_ID" ]]; then
     ACCOUNT_ID="$(random_nickname)"
-    echo "Using nickname: $ACCOUNT_ID"
+    echo "Using: $ACCOUNT_ID"
   fi
 fi
 
@@ -46,15 +41,11 @@ fi
 ENV_FILE="$ACCOUNTS_DIR/${ACCOUNT_ID}.env"
 
 if [[ -f "$ENV_FILE" ]]; then
-  read -r -p "data/accounts/${ACCOUNT_ID}.env already exists. Overwrite? [y/N] " ans
+  read -r -p "Overwrite ${ACCOUNT_ID}? [y/N] " ans
   if [[ ! "$ans" =~ ^[Yy]$ ]]; then
-    echo "Keeping existing file. Opening sign-in..."
     exec "$ROOT/sign-in.sh" "$ACCOUNT_ID"
   fi
 fi
-
-echo "Creating account: $ACCOUNT_ID"
-echo
 
 read -r -p "UCF email: " UCF_EMAIL
 read -r -s -p "UCF password: " UCF_PASSWORD
@@ -74,11 +65,5 @@ UCF_ID=${UCF_ID}
 EOF
 
 chmod 600 "$ENV_FILE"
-
-echo
-echo "Wrote $ENV_FILE"
-echo "They'll enter their public name during sign-in."
-echo "Starting sign-in..."
-echo
 
 exec "$ROOT/sign-in.sh" "$ACCOUNT_ID"
