@@ -23,6 +23,7 @@ from shared.accounts import ACCOUNTS_DIR, load_accounts
 from shared.config import LIBCAL_RESERVE_URL, OUTLOOK_INBOX_URL
 
 AUTH_TIMEOUT_SECONDS = 300
+COOKIE_SETTLE_SECONDS = 3
 
 
 def find_account(account_id: str):
@@ -67,23 +68,40 @@ def prompt_public_name(account) -> str:
 
 
 def save_libcal_session(page, account) -> bool:
-    page.goto(LIBCAL_RESERVE_URL, wait_until="networkidle")
-    bot.ensure_logged_in(page, account, redirect_after_login=True, interactive=False)
-    if bot.is_login_page(page) and not bot.wait_for_login_complete(page, AUTH_TIMEOUT_SECONDS):
+    print("Opening LibCal — complete 2FA in the browser if prompted.")
+    page.goto(LIBCAL_RESERVE_URL, wait_until="domcontentloaded", timeout=60000)
+    time.sleep(2)
+
+    if bot.is_login_page(page) or not bot.is_libcal_ready(page):
+        bot.ensure_logged_in(page, account, redirect_after_login=False, interactive=False)
+
+    if not bot.wait_for_site_ready(page, bot.is_libcal_ready, AUTH_TIMEOUT_SECONDS):
         return False
-    if "largestudyrooms" not in page.url.lower() and "libcal.com" not in page.url.lower():
-        page.goto(LIBCAL_RESERVE_URL, wait_until="networkidle")
-        time.sleep(1)
-    return not bot.is_login_page(page)
+
+    if "largestudyrooms" not in page.url.lower():
+        page.goto(LIBCAL_RESERVE_URL, wait_until="networkidle", timeout=60000)
+
+    if not bot.wait_for_site_ready(page, bot.is_libcal_ready, 60):
+        return False
+
+    time.sleep(COOKIE_SETTLE_SECONDS)
+    return bot.is_libcal_ready(page)
 
 
 def save_outlook_session(page) -> bool:
-    page.goto(OUTLOOK_INBOX_URL, wait_until="networkidle")
+    print("Opening Outlook — waiting for inbox to load.")
+    page.goto(OUTLOOK_INBOX_URL, wait_until="domcontentloaded", timeout=60000)
     time.sleep(2)
-    if bot.is_login_page(page) and not bot.wait_for_login_complete(page, AUTH_TIMEOUT_SECONDS):
+
+    if bot.is_login_page(page) or not bot.is_outlook_ready(page):
+        if bot.is_login_page(page):
+            print("Outlook needs sign-in — finish in the browser.")
+
+    if not bot.wait_for_site_ready(page, bot.is_outlook_ready, AUTH_TIMEOUT_SECONDS):
         return False
-    url = page.url.lower()
-    return "outlook.office.com" in url and not bot.is_login_page(page)
+
+    time.sleep(COOKIE_SETTLE_SECONDS)
+    return bot.is_outlook_ready(page)
 
 
 def main() -> None:
@@ -119,7 +137,7 @@ def main() -> None:
     public_name = prompt_public_name(account)
     account = replace(account, public_name=public_name)
 
-    print(f"Signing in {account.id} — browser will close automatically when done.")
+    print(f"Signing in {account.id} — browser closes after LibCal and Outlook are fully loaded.")
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(

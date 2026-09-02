@@ -737,6 +737,53 @@ def wait_for_possible_redirect(page, timeout_seconds: int = 5):
     return is_login_page(page)
 
 
+def is_libcal_ready(page) -> bool:
+    """True when the large study rooms booking grid is loaded and SSO is finished."""
+    if is_login_page(page):
+        return False
+    url = page.url.lower()
+    if "libcal.com" not in url:
+        return False
+    try:
+        page.locator(
+            ".fc-datagrid, a.s-lc-eq-avail, .s-lc-eq-avail, .fc-timeline-body"
+        ).first.wait_for(state="visible", timeout=3000)
+        return True
+    except Exception:
+        return "largestudyrooms" in url and not is_login_page(page)
+
+
+def is_outlook_ready(page) -> bool:
+    """True when Outlook inbox is loaded."""
+    if is_login_page(page):
+        return False
+    url = page.url.lower()
+    if "outlook.office.com" not in url:
+        return False
+    try:
+        page.locator(
+            '[role="main"], [aria-label*="Message list" i], [aria-label*="Mail list" i]'
+        ).first.wait_for(state="visible", timeout=3000)
+        return True
+    except Exception:
+        return "/mail" in url and not is_login_page(page)
+
+
+def wait_for_site_ready(page, ready_check, timeout_seconds: int = 300) -> bool:
+    """Poll until ready_check(page) is true for two consecutive checks."""
+    deadline = time.time() + timeout_seconds
+    stable = 0
+    while time.time() < deadline:
+        if ready_check(page):
+            stable += 1
+            if stable >= 2:
+                return True
+        else:
+            stable = 0
+        time.sleep(2)
+    return ready_check(page)
+
+
 def wait_for_login_complete(page, timeout_seconds: int = 300) -> bool:
     """Poll until SSO/login pages are finished."""
     deadline = time.time() + timeout_seconds
@@ -746,7 +793,9 @@ def wait_for_login_complete(page, timeout_seconds: int = 300) -> bool:
                 page.wait_for_load_state("domcontentloaded", timeout=5000)
             except Exception:
                 pass
-            return True
+            time.sleep(2)
+            if not is_login_page(page):
+                return True
         time.sleep(2)
     return not is_login_page(page)
 
@@ -925,8 +974,8 @@ def ensure_logged_in(page, account, redirect_after_login=True, interactive: bool
     # ── Step 4: Submit 2FA code ──
     code_submitted = False
     if USE_IMESSAGE_2FA:
-        print(f"Waiting for SMS code from {UCF_2FA_SENDER} (polling iMessage for up to 60s)...")
-        for _ in range(60):
+        print(f"Waiting for SMS code from {UCF_2FA_SENDER} (polling iMessage for up to 180s)...")
+        for _ in range(180):
             code = get_2fa_from_imessage(UCF_2FA_SENDER)
             if code:
                 print(f"Got 2FA code from iMessage: {code}")
@@ -943,16 +992,15 @@ def ensure_logged_in(page, account, redirect_after_login=True, interactive: bool
 
     if not code_submitted:
         if USE_IMESSAGE_2FA:
-            print("Could not get 2FA code from iMessage.")
+            print("Waiting for 2FA — complete sign-in in the browser if needed.")
         else:
             print("Complete 2FA in the browser (enter the SMS code on the login page).")
         if interactive:
             wait_for_user("Press Enter when login is complete...")
-        elif not wait_for_login_complete(page):
-            print("2FA timed out — finish sign-in and run ./sign-in.sh again.")
-            return
 
-    if redirect_after_login:
+    if redirect_after_login and interactive:
+        page.goto(BASE_URL, wait_until="networkidle")
+    elif redirect_after_login and not interactive and not is_login_page(page):
         page.goto(BASE_URL, wait_until="networkidle")
 
 
