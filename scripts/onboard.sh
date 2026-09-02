@@ -1,11 +1,14 @@
 #!/bin/bash
-# Guided first-time setup — calendar, accounts, cron in one flow.
+# Guided first-time setup — calendar, accounts, launchd schedule in one flow.
 # Usage: ./onboard.sh
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+
+# shellcheck source=scripts/launchd.sh
+source "$ROOT/scripts/launchd.sh"
 
 BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
 GOLD='\033[38;5;220m'; GREEN='\033[38;5;82m'; RED='\033[38;5;196m'
@@ -21,9 +24,10 @@ account_count() {
   find "$ROOT/data/accounts" -maxdepth 1 -name '*.env' ! -name 'example.env' 2>/dev/null | wc -l | tr -d ' '
 }
 
-cron_installed() {
-  [[ -x "$ROOT/run-bot.sh" ]] && crontab -l 2>/dev/null | grep -qF "$ROOT/run-bot.sh"
-}
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  say "${RED}This wizard is macOS only.${RESET}"
+  exit 1
+fi
 
 if [[ ! -x "$ROOT/venv/bin/python3" ]]; then
   say "${RED}Run ./setup.sh first (or use the curl installer).${RESET}"
@@ -88,16 +92,16 @@ while true; do
   say ""
 done
 
-# --- Cron ---
+# --- LaunchAgent ---
 step "4/4  Auto-booking schedule"
-if cron_installed; then
-  say "${GREEN}  ok${RESET} Cron already installed"
-  crontab -l 2>/dev/null | grep -F "$ROOT/run-bot.sh" | sed 's/^/    /'
+if launchd_installed; then
+  say "${GREEN}  ok${RESET} LaunchAgent already installed"
+  say "    $(launchd_plist_path)"
 else
   say "Install a randomized morning run window (Fri–Tue → books Mon–Fri rooms)?"
-  read -r -p "Install cron? [Y/n] " install
+  read -r -p "Install LaunchAgent? [Y/n] " install
   if [[ -z "$install" || "$install" =~ ^[Yy]$ ]]; then
-    "$ROOT/install-cron.sh"
+    "$ROOT/install-launchd.sh"
   fi
 fi
 

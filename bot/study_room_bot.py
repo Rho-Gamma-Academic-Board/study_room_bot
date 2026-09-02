@@ -1,8 +1,8 @@
 # Script by: Joshua Perez
-# UCF LibCal large study room booking bot (Linux / Raspberry Pi / macOS).
+# UCF LibCal large study room booking bot (macOS).
 # Uses Playwright, multi-account rotation, and Google Calendar.
 
-
+import _bootstrap  # noqa: F401
 
 import os
 import re
@@ -350,7 +350,7 @@ def submit_2fa_to_page(page, code: str) -> bool:
 
 
 def read_2fa_code_from_terminal() -> str:
-    """Prompt for a 6-digit SMS code (Linux/Pi sign-in over SSH or RDP)."""
+    """Prompt for a 6-digit SMS code when iMessage auto-read is disabled."""
     if RUN_HEADLESS:
         return ""
     try:

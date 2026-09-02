@@ -9,6 +9,8 @@ Usage:
   venv/bin/python3 auth_google_calendar.py
 """
 
+import _bootstrap  # noqa: F401
+
 from shared.accounts import mask_email
 from shared.config import (
     BOOKING_EMAIL,

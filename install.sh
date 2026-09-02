@@ -1,10 +1,9 @@
 #!/bin/bash
-# One-line installer.
+# One-line installer for macOS (always-on Mac mini).
 #
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/Rho-Gamma-Academic-Board/study_room_bot/main/install.sh)"
 #
-# Clones (or updates) the repo, installs system + Python deps, then opens the menu.
-# On Raspberry Pi OS / Debian, apt packages are installed automatically (sudo prompt).
+# Clones (or updates) the repo, sets up Python/Playwright, then opens the menu.
 
 set -euo pipefail
 
@@ -19,36 +18,26 @@ info()  { printf "%b\n" "${GOLD}==>${RESET} ${BOLD}$1${RESET}"; }
 ok()    { printf "%b\n" "${GREEN}  ok${RESET} ${DIM}$1${RESET}"; }
 die()   { printf "%b\n" "${RED}error:${RESET} $1" >&2; exit 1; }
 
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  die "This installer is macOS only (use an always-on Mac mini)."
+fi
+
 # When run through a pipe, stdin is the script itself. Reattach the terminal
-# so the interactive menu, sudo, and password prompts still work.
+# so the interactive menu and password prompts still work.
 if [[ ! -t 0 ]] && (exec < /dev/tty) 2>/dev/null; then
   exec < /dev/tty
 fi
 
-# --- Pre-clone: need git only (python/playwright handled after clone) ---
 bootstrap_git() {
   if command -v git >/dev/null 2>&1; then
     return 0
   fi
-  if [[ "$(uname -s)" == "Linux" ]] && command -v apt-get >/dev/null 2>&1; then
-    info "Installing git (sudo may prompt for your password)"
-    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-      apt-get update -qq
-      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates git
-    elif command -v sudo >/dev/null 2>&1; then
-      sudo apt-get update -qq
-      DEBIAN_FRONTEND=noninteractive sudo apt-get install -y ca-certificates git
-    else
-      die "git is required. Run as root or install git, then retry."
-    fi
-    return 0
-  fi
-  if [[ "$(uname -s)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
+  if command -v brew >/dev/null 2>&1; then
     info "Installing git via Homebrew"
     brew install git
     return 0
   fi
-  die "git is required and could not be installed automatically"
+  die "git is required. Install Xcode Command Line Tools: xcode-select --install"
 }
 
 info "Checking prerequisites"
@@ -71,18 +60,17 @@ fi
 cd "$INSTALL_DIR"
 chmod +x ./*.sh scripts/*.sh 2>/dev/null || true
 
-info "Installing system packages (sudo may prompt on Raspberry Pi / Debian)"
-./scripts/ensure-system.sh
-ok "system packages ready"
-
 info "Setting up Python, Playwright, and Chromium"
 ./setup.sh
 ok "environment ready"
 
+# shellcheck source=scripts/launchd.sh
+source "./scripts/launchd.sh"
+
 printf '\n'
 if [[ ! -f config/credentials.json || ! -f config/token.json ]] \
   || [[ "$(find data/accounts -maxdepth 1 -name '*.env' ! -name 'example.env' 2>/dev/null | wc -l | tr -d ' ')" -lt 1 ]] \
-  || ! crontab -l 2>/dev/null | grep -qF "$INSTALL_DIR/run-bot.sh"; then
+  || ! launchd_installed; then
   info "Launching setup wizard"
   exec ./onboard.sh
 fi

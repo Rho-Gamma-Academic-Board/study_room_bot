@@ -52,7 +52,7 @@ RUN_HEADLESS = os.environ.get("RUN_HEADLESS", "").strip().lower() in ("1", "true
 RUN_HEADLESS_TEST = os.environ.get("RUN_HEADLESS_TEST", "").strip().lower() in ("1", "true", "yes")
 PIPELINE_TEST = os.environ.get("PIPELINE_TEST", "").strip().lower() in ("1", "true", "yes")
 
-# macOS only: read UCF SMS codes from iMessage. Off by default on Linux/Pi.
+# Read UCF SMS codes from iMessage on macOS (enabled by default on Darwin).
 _USE_IMESSAGE_DEFAULT = "1" if sys.platform == "darwin" else "0"
 USE_IMESSAGE_2FA = os.environ.get("USE_IMESSAGE_2FA", _USE_IMESSAGE_DEFAULT).strip().lower() in (
     "1",

@@ -1,5 +1,5 @@
 #!/bin/bash
-# First-time setup on Linux (Raspberry Pi) or macOS.
+# First-time setup on macOS.
 # Creates the venv, installs Python dependencies, Playwright, and Chromium.
 # Safe to run repeatedly (idempotent). Usage: ./setup.sh
 
@@ -8,14 +8,28 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-# shellcheck source=scripts/ensure-system.sh
-source "$ROOT/scripts/ensure-system.sh"
-
 step() { printf '\n==> %s\n' "$1"; }
 die()  { printf 'error: %s\n' "$1" >&2; exit 1; }
 
-step "Checking system packages"
-ensure_system_packages
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  die "setup.sh is macOS only"
+fi
+
+ensure_python() {
+  if python3 -c "import venv, ensurepip" >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v brew >/dev/null 2>&1; then
+    step "Installing Python via Homebrew"
+    brew install python3
+    return 0
+  fi
+  die "Python 3 with venv is required. Run: xcode-select --install (or install Homebrew)"
+}
+
+step "Checking Python"
+command -v python3 >/dev/null 2>&1 || ensure_python
+ensure_python
 echo "    $(python3 --version)"
 
 step "Creating virtual environment"
@@ -48,15 +62,8 @@ if missing:
 print("    all Python packages present")
 PY
 
-install_chromium_stack() {
-  if [[ "$(uname -s)" == "Linux" ]]; then
-    step "Installing Chromium system libraries (sudo may prompt)"
-    run_privileged ./venv/bin/playwright install-deps chromium
-  fi
-
-  step "Installing Playwright Chromium browser"
-  ./venv/bin/playwright install chromium
-}
+step "Installing Playwright Chromium browser"
+./venv/bin/playwright install chromium
 
 chromium_launches() {
   ./venv/bin/python3 - <<'PY'
@@ -73,12 +80,10 @@ except Exception as exc:
 PY
 }
 
-install_chromium_stack
-
 step "Verifying Chromium launches"
 if ! chromium_launches; then
-  echo "    Chromium failed — reinstalling browser stack and retrying..."
-  install_chromium_stack
+  echo "    Chromium failed — reinstalling and retrying..."
+  ./venv/bin/playwright install chromium
   chromium_launches || die "Chromium still will not launch. Check logs above."
 fi
 echo "    Chromium launches OK"
@@ -96,9 +101,8 @@ cat <<'EOF'
 
 Setup complete. Next steps:
   ./start.sh                              # interactive menu
-  1. Edit config/ucf_credentials.env
-  2. Add config/credentials.json (Google OAuth)
-  3. ./add-account.sh                     # browser sign-in, SMS 2FA on Pi
-  4. ./venv/bin/python3 bot/auth_google_calendar.py
-  5. ./install-cron.sh
+  ./onboard.sh                            # guided wizard
+  ./import-google-credentials.sh          # paste Google OAuth JSON
+  ./add-account.sh                        # browser sign-in (iMessage 2FA)
+  ./install-launchd.sh                    # schedule auto-booking
 EOF

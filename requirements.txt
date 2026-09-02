@@ -1,4 +1,4 @@
-# Python 3.10+ recommended (Raspberry Pi OS / Linux / macOS)
+# Python 3.10+ recommended (macOS)
 playwright>=1.40.0
 google-auth-oauthlib>=1.2.0
 google-auth-httplib2>=0.2.0

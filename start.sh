@@ -9,6 +9,9 @@ cd "$ROOT"
 
 RUN_BOT="$ROOT/run-bot.sh"
 
+# shellcheck source=scripts/launchd.sh
+source "$ROOT/scripts/launchd.sh"
+
 # Width of the whole UI column. Everything is drawn inside this and the
 # column is centered on the terminal.
 UI_WIDTH=72
@@ -130,7 +133,7 @@ onboarding_needed() {
   [[ ! -f "$ROOT/config/credentials.json" ]] \
     || [[ ! -f "$ROOT/config/token.json" ]] \
     || [[ "$(account_count)" -lt 1 ]] \
-    || ! crontab -l 2>/dev/null | grep -qF "$RUN_BOT"
+    || ! launchd_installed
 }
 
 prompt_onboard() {
@@ -139,7 +142,7 @@ prompt_onboard() {
   fi
 
   line '─'
-  say " ${WHITE}First-time setup? Run the guided wizard (calendar + accounts + cron).${RESET}"
+  say " ${WHITE}First-time setup? Run the guided wizard (calendar + accounts + schedule).${RESET}"
   printf "%b" "${PAD} ${GOLD}Run ./onboard.sh now? [Y/n]${RESET} "
   read -r ans
   if [[ -z "$ans" || "$ans" =~ ^[Yy]$ ]]; then
@@ -161,49 +164,29 @@ status_warn() {
   say " ${RED}●${RESET} $1"
 }
 
-show_cron_status() {
-  section_title "CRON SCHEDULE"
+show_schedule_status() {
+  section_title "AUTO-BOOKING SCHEDULE"
 
-  if ! crontab -l >/dev/null 2>&1; then
-    status_warn "No crontab for this user"
-    say " ${DIM}→ Use ${GOLD}[ 4 ]${DIM} to install (randomized morning window)${RESET}"
-    return
-  fi
-
-  local cron_lines
-  cron_lines="$(crontab -l 2>/dev/null | grep -F "$RUN_BOT" || true)"
-  if [[ -n "$cron_lines" ]]; then
-    status_ok "Study room bot scheduled"
-    while IFS= read -r entry; do
-      say "   ${GOLD}${entry}${RESET}"
-    done <<< "$cron_lines"
+  if launchd_installed; then
+    status_ok "LaunchAgent installed"
+    say "   ${GOLD}$(launchd_plist_path)${RESET}"
     printf '\n'
-    if [[ -f "$ROOT/config/cron.env" ]]; then
+    if [[ -f "$ROOT/config/schedule.env" ]]; then
       # shellcheck disable=SC1090
-      source "$ROOT/config/cron.env"
-      local end_min=$((CRON_BASE_MINUTE + CRON_JITTER_MINUTES))
-      local end_hour=${CRON_BASE_HOUR:-7}
+      source "$ROOT/config/schedule.env"
+      local end_min=$((SCHEDULE_BASE_MINUTE + SCHEDULE_JITTER_MINUTES))
+      local end_hour=${SCHEDULE_BASE_HOUR:-7}
       if (( end_min >= 60 )); then
         end_min=$((end_min % 60))
         end_hour=$((end_hour + 1))
       fi
-      say " ${DIM}Random window: ~$(printf '%02d:%02d' "$CRON_BASE_HOUR" "$CRON_BASE_MINUTE")–$(printf '%02d:%02d' "$end_hour" "$end_min") (varies daily)${RESET}"
+      say " ${DIM}Random window: ~$(printf '%02d:%02d' "$SCHEDULE_BASE_HOUR" "$SCHEDULE_BASE_MINUTE")–$(printf '%02d:%02d' "$end_hour" "$end_min") (varies daily)${RESET}"
     fi
     say " ${DIM}Fri–Tue trigger → books Mon–Fri (3 days ahead)${RESET}"
     say " ${DIM}Logs: ${GOLD_DIM}logs/study_room_bot.log${RESET}"
   else
-    status_warn "No study room cron job installed"
+    status_warn "No LaunchAgent installed"
     say " ${DIM}→ Use ${GOLD}[ 4 ]${DIM} to install (randomized morning window)${RESET}"
-  fi
-
-  local other
-  other="$(crontab -l 2>/dev/null | grep -v -F "$RUN_BOT" | grep -v '^#' | grep -v '^[[:space:]]*$' || true)"
-  if [[ -n "$other" ]]; then
-    printf '\n'
-    say " ${GOLD_DIM}Other cron jobs:${RESET}"
-    while IFS= read -r entry; do
-      say "   ${DIM}${entry}${RESET}"
-    done <<< "$other"
   fi
 }
 
@@ -255,7 +238,7 @@ show_status() {
   fi
 
   list_accounts
-  show_cron_status
+  show_schedule_status
 }
 
 prompt_setup() {
@@ -285,15 +268,15 @@ show_menu() {
   say "${RED}${BOLD}╚$(repeat '═' 70)╝${RESET}"
   printf '\n'
 
-  menu_item "1" "SHOW STATUS" "accounts, cron, auth"
+  menu_item "1" "SHOW STATUS" "accounts, schedule, auth"
   menu_item "2" "ADD ACCOUNT" "new UCF login + browser sign-in"
   menu_item "3" "REMOVE ACCOUNT" "delete credentials + profile"
-  menu_item "4" "INSTALL CRON" "randomized morning window"
-  menu_item "5" "UNINSTALL CRON" "remove scheduled runs"
+  menu_item "4" "INSTALL SCHEDULE" "LaunchAgent morning window"
+  menu_item "5" "UNINSTALL SCHEDULE" "remove LaunchAgent"
   menu_item "6" "RUN BOT ONCE" "test booking now"
   menu_item "7" "GOOGLE CALENDAR" "OAuth sign-in"
   menu_item "8" "RE-SIGN IN UCF" "refresh browser session"
-  menu_item "9" "SETUP WIZARD" "first-time: calendar, accounts, cron"
+  menu_item "9" "SETUP WIZARD" "first-time: calendar, accounts, schedule"
   say "  ${RED}┃${RESET}"
   menu_item "0" "EXIT" ""
 
@@ -316,10 +299,10 @@ run_choice() {
       "$ROOT/remove-account.sh" || true
       ;;
     4)
-      "$ROOT/install-cron.sh" || true
+      "$ROOT/install-launchd.sh" || true
       ;;
     5)
-      "$ROOT/uninstall-cron.sh" || true
+      "$ROOT/uninstall-launchd.sh" || true
       ;;
     6)
       "$ROOT/run-bot.sh" || true

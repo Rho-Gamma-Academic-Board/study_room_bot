@@ -20,6 +20,8 @@ Usage:
 
 from __future__ import annotations
 
+import _bootstrap  # noqa: F401
+
 import argparse
 import os
 import sys
@@ -124,7 +126,7 @@ def main() -> None:
     print()
     print("A browser window will open (not headless).")
     print("1. Complete UCF SSO + 2FA on LibCal if prompted.")
-    print("   On Linux/Pi: enter the SMS code in the browser or terminal.")
+    print("   Enter the SMS code in the browser or terminal when prompted.")
     print("2. The script will open Outlook so that session is saved too.")
     print("3. Press Enter here when both sites look logged in.")
     print()
