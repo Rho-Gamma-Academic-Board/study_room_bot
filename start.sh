@@ -166,7 +166,7 @@ show_cron_status() {
 
   if ! crontab -l >/dev/null 2>&1; then
     status_warn "No crontab for this user"
-    say " ${DIM}→ Use ${GOLD}[ 4 ]${DIM} to install weekday booking (8 AM Fri–Tue)${RESET}"
+    say " ${DIM}→ Use ${GOLD}[ 4 ]${DIM} to install (randomized morning window)${RESET}"
     return
   fi
 
@@ -178,11 +178,22 @@ show_cron_status() {
       say "   ${GOLD}${entry}${RESET}"
     done <<< "$cron_lines"
     printf '\n'
-    say " ${DIM}Runs 8 AM Fri–Tue → books Mon–Fri (3 days ahead)${RESET}"
+    if [[ -f "$ROOT/config/cron.env" ]]; then
+      # shellcheck disable=SC1090
+      source "$ROOT/config/cron.env"
+      local end_min=$((CRON_BASE_MINUTE + CRON_JITTER_MINUTES))
+      local end_hour=${CRON_BASE_HOUR:-7}
+      if (( end_min >= 60 )); then
+        end_min=$((end_min % 60))
+        end_hour=$((end_hour + 1))
+      fi
+      say " ${DIM}Random window: ~$(printf '%02d:%02d' "$CRON_BASE_HOUR" "$CRON_BASE_MINUTE")–$(printf '%02d:%02d' "$end_hour" "$end_min") (varies daily)${RESET}"
+    fi
+    say " ${DIM}Fri–Tue trigger → books Mon–Fri (3 days ahead)${RESET}"
     say " ${DIM}Logs: ${GOLD_DIM}logs/study_room_bot.log${RESET}"
   else
     status_warn "No study room cron job installed"
-    say " ${DIM}→ Use ${GOLD}[ 4 ]${DIM} to install (8 AM Fri–Tue, weekdays only)${RESET}"
+    say " ${DIM}→ Use ${GOLD}[ 4 ]${DIM} to install (randomized morning window)${RESET}"
   fi
 
   local other
@@ -276,7 +287,7 @@ show_menu() {
   menu_item "1" "SHOW STATUS" "accounts, cron, auth"
   menu_item "2" "ADD ACCOUNT" "new UCF login + browser sign-in"
   menu_item "3" "REMOVE ACCOUNT" "delete credentials + profile"
-  menu_item "4" "INSTALL CRON" "8 AM Fri–Tue auto-booking"
+  menu_item "4" "INSTALL CRON" "randomized morning window"
   menu_item "5" "UNINSTALL CRON" "remove scheduled runs"
   menu_item "6" "RUN BOT ONCE" "test booking now"
   menu_item "7" "GOOGLE CALENDAR" "OAuth sign-in"

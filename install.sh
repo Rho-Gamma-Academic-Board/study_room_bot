@@ -43,7 +43,7 @@ else
 fi
 
 cd "$INSTALL_DIR"
-chmod +x ./*.sh 2>/dev/null || true
+chmod +x ./*.sh scripts/*.sh 2>/dev/null || true
 
 # Run setup unless a working venv with the dependencies is already in place.
 venv_ready() {

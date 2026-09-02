@@ -97,7 +97,7 @@ if cron_installed; then
   say "${GREEN}  ok${RESET} Cron already installed"
   crontab -l 2>/dev/null | grep -F "$ROOT/run-bot.sh" | sed 's/^/    /'
 else
-  say "Install 8 AM runs (Fri–Tue → books Mon–Fri rooms, 3 days ahead)?"
+  say "Install a randomized morning run window (Fri–Tue → books Mon–Fri rooms)?"
   read -r -p "Install cron? [Y/n] " install
   if [[ -z "$install" || "$install" =~ ^[Yy]$ ]]; then
     "$ROOT/install-cron.sh"

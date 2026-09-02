@@ -4,7 +4,7 @@ Automates UCF LibCal **large study room** bookings, rotates across multiple UCF 
 
 Designed for **Linux / Raspberry Pi** (cron, headless). Also runs on macOS.
 
-- Runs **8:00 AM Fri–Tue** via cron (books **Mon–Fri** rooms, 3 days ahead)
+- Runs on a **randomized morning window** Fri–Tue via cron (books **Mon–Fri** rooms, 3 days ahead)
 - Skips **Saturday and Sunday** study room dates
 - Books **3 days ahead**
 - Targets **12:00pm–10:00pm** on one **capacity-10** room (360H → 360F → other cap-10)
@@ -17,7 +17,7 @@ Designed for **Linux / Raspberry Pi** (cron, headless). Also runs on macOS.
 - **Playwright** + Chromium
 - **UCF account(s)** — `data/accounts/<nickname>.env` per person
 - **Google Calendar OAuth** — `config/credentials.json` + `config/token.json`
-- Pi **on at 8:00 AM** on run days (Fri, Sat, Sun, Mon, Tue)
+- Pi **on during the morning run window** on run days (Fri, Sat, Sun, Mon, Tue) — typically ~7:25–8:35 AM
 - **Browser + RDP/SSH** for `./add-account.sh` (enter SMS 2FA manually on Linux)
 
 ### Raspberry Pi OS packages
@@ -73,7 +73,7 @@ Then:
 ```bash
 ./add-account.sh              # repeat per person (RDP + browser)
 ./venv/bin/python3 bot/auth_google_calendar.py
-./install-cron.sh             # 8 AM Fri–Tue (weekday rooms)
+./install-cron.sh             # randomized morning window Fri–Tue (weekday rooms)
 ./run-bot.sh                  # test once
 ```
 
@@ -90,7 +90,7 @@ Access the Pi over **Tailscale** for RDP/SSH when adding accounts.
 | `./add-account.sh` | Create account + browser sign-in |
 | `./sign-in.sh <id>` | Re-auth saved session |
 | `./remove-account.sh <id>` | Remove account + profile |
-| `./install-cron.sh` | Schedule 8 AM runs (Fri–Tue → Mon–Fri bookings) |
+| `./install-cron.sh` | Schedule randomized morning runs (Fri–Tue → Mon–Fri bookings) |
 | `./uninstall-cron.sh` | Remove cron job |
 | `./run-bot.sh` | Run bot once (headless, logs to file) |
 
@@ -149,7 +149,11 @@ Scheduled `./run-bot.sh` runs headless and relies on **saved cookies**. Re-run `
 
 ## What not to commit
 
-Git ignores: `venv/`, `data/accounts/*.env`, `data/profiles/`, `config/ucf_credentials.env`, `config/credentials.json`, `config/token.json`, `logs/`
+Git ignores: `venv/`, `data/accounts/*.env`, `data/profiles/`, `config/ucf_credentials.env`, `config/cron.env`, `config/credentials.json`, `config/token.json`, `logs/`
+
+## Cron schedule
+
+`./install-cron.sh` picks a random cron minute (7:25–7:44 AM) and adds up to 50 minutes of extra delay when the job runs, so bookings don't always fire at exactly 8:00 AM. Re-run `./install-cron.sh` to reshuffle. Manual `./run-bot.sh` runs immediately with no delay.
 
 ## macOS (optional)
 

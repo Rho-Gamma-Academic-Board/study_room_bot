@@ -10,6 +10,7 @@ data/profiles/
 data/account_usage.json
 
 # Secrets (never commit)
+config/cron.env
 config/ucf_credentials.env
 config/credentials.json
 config/token.json
