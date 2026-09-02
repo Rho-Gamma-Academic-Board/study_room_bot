@@ -118,6 +118,41 @@ is_setup_done() {
   [[ -x "$ROOT/venv/bin/python3" ]]
 }
 
+account_count() {
+  if [[ ! -d "$ROOT/data/accounts" ]]; then
+    echo 0
+    return
+  fi
+  find "$ROOT/data/accounts" -maxdepth 1 -name '*.env' ! -name 'example.env' 2>/dev/null | wc -l | tr -d ' '
+}
+
+onboarding_needed() {
+  [[ ! -f "$ROOT/config/credentials.json" ]] \
+    || [[ ! -f "$ROOT/config/token.json" ]] \
+    || [[ "$(account_count)" -lt 1 ]] \
+    || ! crontab -l 2>/dev/null | grep -qF "$RUN_BOT"
+}
+
+prompt_onboard() {
+  if ! is_setup_done || ! onboarding_needed; then
+    return 0
+  fi
+
+  line '─'
+  say " ${WHITE}First-time setup? Run the guided wizard (calendar + accounts + cron).${RESET}"
+  printf "%b" "${PAD} ${GOLD}Run ./onboard.sh now? [Y/n]${RESET} "
+  read -r ans
+  if [[ -z "$ans" || "$ans" =~ ^[Yy]$ ]]; then
+    "$ROOT/onboard.sh" || true
+    printf '\n'
+    printf "%b" "${PAD} ${DIM}Press Enter to continue...${RESET}"
+    read -r
+  else
+    say " ${DIM}Run ./onboard.sh anytime, or use menu [ 9 ].${RESET}"
+    printf '\n'
+  fi
+}
+
 status_ok() {
   say " ${GREEN}●${RESET} $1"
 }
@@ -246,6 +281,7 @@ show_menu() {
   menu_item "6" "RUN BOT ONCE" "test booking now"
   menu_item "7" "GOOGLE CALENDAR" "OAuth sign-in"
   menu_item "8" "RE-SIGN IN UCF" "refresh browser session"
+  menu_item "9" "SETUP WIZARD" "first-time: calendar, accounts, cron"
   say "  ${RED}┃${RESET}"
   menu_item "0" "EXIT" ""
 
@@ -295,6 +331,9 @@ run_choice() {
         fi
       fi
       ;;
+    9)
+      "$ROOT/onboard.sh" || true
+      ;;
     0|q|Q)
       printf '\n'
       line '═'
@@ -304,7 +343,7 @@ run_choice() {
       exit 0
       ;;
     *)
-      say " ${RED}Invalid choice.${RESET} Pick 0–8."
+      say " ${RED}Invalid choice.${RESET} Pick 0–9."
       ;;
   esac
 }
@@ -318,6 +357,7 @@ main() {
 
   show_banner
   prompt_setup
+  prompt_onboard
 
   while true; do
     show_status

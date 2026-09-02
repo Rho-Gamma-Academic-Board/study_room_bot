@@ -47,6 +47,12 @@ cd study_room_bot
 
 `./start.sh` shows the banner, offers first-time setup, then an interactive menu (accounts, cron, run bot, etc.).
 
+**New install?** Run the guided wizard instead of doing each step manually:
+
+```bash
+./onboard.sh
+```
+
 Or run setup manually:
 
 ```bash
@@ -79,6 +85,7 @@ Access the Pi over **Tailscale** for RDP/SSH when adding accounts.
 |--------|----------------|
 | `install.sh` | One-line remote installer (clone + setup + menu) |
 | `./start.sh` | Interactive menu (setup, accounts, cron, run bot) |
+| `./onboard.sh` | Guided wizard — calendar, accounts, cron in one flow |
 | `./setup.sh` | Create venv, install deps, install Chromium |
 | `./add-account.sh` | Create account + browser sign-in |
 | `./sign-in.sh <id>` | Re-auth saved session |

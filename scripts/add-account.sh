@@ -8,8 +8,24 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ACCOUNTS_DIR="$ROOT/data/accounts"
 ACCOUNT_ID="${1:-}"
 
+random_nickname() {
+  local names=(atlas cedar ember maple nova pigeon ripple summit willow)
+  local pick="${names[$((RANDOM % ${#names[@]}))]}"
+  echo "${pick}$((10 + RANDOM % 90))"
+}
+
 if [[ -z "$ACCOUNT_ID" ]]; then
-  read -r -p "Account id (nickname, e.g. pigeon): " ACCOUNT_ID
+  echo
+  echo "Add a UCF account. You'll need:"
+  echo "  • UCF email, password, and ID"
+  echo "  • A nickname (anything — doesn't have to be a real name)"
+  echo "  • Browser access for SMS 2FA during sign-in"
+  echo
+  read -r -p "Nickname (Enter for random): " ACCOUNT_ID
+  if [[ -z "$ACCOUNT_ID" ]]; then
+    ACCOUNT_ID="$(random_nickname)"
+    echo "Using nickname: $ACCOUNT_ID"
+  fi
 fi
 
 if [[ -z "$ACCOUNT_ID" ]]; then

@@ -67,6 +67,12 @@ else
 fi
 
 printf '\n'
+if [[ ! -f config/credentials.json || ! -f config/token.json ]] \
+  || [[ "$(find data/accounts -maxdepth 1 -name '*.env' ! -name 'example.env' 2>/dev/null | wc -l | tr -d ' ')" -lt 1 ]] \
+  || ! crontab -l 2>/dev/null | grep -qF "$INSTALL_DIR/run-bot.sh"; then
+  info "Launching setup wizard"
+  exec ./onboard.sh
+fi
+
 info "Launching menu"
-printf '\n'
 exec ./start.sh
