@@ -57,6 +57,7 @@ fi
 # --- Calendar config ---
 step "2/4  Google Calendar"
 "$ROOT/scripts/write-config.sh"
+say "${GREEN}  ok${RESET} Calendar: Academic Board - Study Rooms (rg.academicboard@gmail.com)"
 
 if [[ ! -f "$ROOT/config/token.json" ]]; then
   say ""

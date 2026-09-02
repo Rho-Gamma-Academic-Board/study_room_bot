@@ -92,7 +92,8 @@ if [[ ! -f config/ucf_credentials.env ]]; then
   step "Creating config/ucf_credentials.env"
   mkdir -p config data/accounts data/profiles logs
   cp config/ucf_credentials.env.example config/ucf_credentials.env
-  echo "    created from example — edit before running"
+  chmod 600 config/ucf_credentials.env
+  echo "    using org defaults (Academic Board - Study Rooms)"
 fi
 
 chmod +x ./*.sh scripts/*.sh 2>/dev/null || true
