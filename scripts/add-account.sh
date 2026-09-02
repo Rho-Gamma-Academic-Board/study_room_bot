@@ -8,19 +8,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ACCOUNTS_DIR="$ROOT/data/accounts"
 ACCOUNT_ID="${1:-}"
 
-random_nickname() {
-  local names=(atlas cedar ember maple nova pigeon ripple summit willow)
-  local pick="${names[$((RANDOM % ${#names[@]}))]}"
-  echo "${pick}$((10 + RANDOM % 90))"
-}
-
 if [[ -z "$ACCOUNT_ID" ]]; then
   printf '\n'
-  read -r -p "Nickname (Enter for random): " ACCOUNT_ID
-  if [[ -z "$ACCOUNT_ID" ]]; then
-    ACCOUNT_ID="$(random_nickname)"
-    echo "Using: $ACCOUNT_ID"
-  fi
+  while [[ -z "$ACCOUNT_ID" ]]; do
+    read -r -p "Nickname: " ACCOUNT_ID
+    if [[ -z "$ACCOUNT_ID" ]]; then
+      echo "Nickname is required."
+    fi
+  done
 fi
 
 if [[ -z "$ACCOUNT_ID" ]]; then
