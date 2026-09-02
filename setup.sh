@@ -1,26 +1,21 @@
 #!/bin/bash
 # First-time setup on Linux (Raspberry Pi) or macOS.
-# Creates the venv, installs Python dependencies, and installs Chromium.
-# Usage: ./setup.sh
+# Creates the venv, installs Python dependencies, Playwright, and Chromium.
+# Safe to run repeatedly (idempotent). Usage: ./setup.sh
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
+# shellcheck source=scripts/ensure-system.sh
+source "$ROOT/scripts/ensure-system.sh"
+
 step() { printf '\n==> %s\n' "$1"; }
 die()  { printf 'error: %s\n' "$1" >&2; exit 1; }
 
-APT_HINT="sudo apt update && sudo apt install -y python3 python3-venv python3-pip"
-
-step "Checking Python"
-command -v python3 >/dev/null 2>&1 || die "python3 is required. Install it with: $APT_HINT"
-
-# python3-venv is a separate package on Debian/Raspberry Pi OS and its absence
-# is the most common setup failure, so check for it up front.
-if ! python3 -c "import venv, ensurepip" >/dev/null 2>&1; then
-  die "python3 venv module is missing. Install it with: $APT_HINT"
-fi
+step "Checking system packages"
+ensure_system_packages
 echo "    $(python3 --version)"
 
 step "Creating virtual environment"
@@ -28,7 +23,7 @@ if [[ -x "venv/bin/python3" ]]; then
   echo "    venv already exists — reusing it"
 else
   rm -rf venv
-  python3 -m venv venv || die "Failed to create venv. Try: $APT_HINT"
+  python3 -m venv venv || die "Failed to create venv"
   echo "    created ./venv"
 fi
 
@@ -37,7 +32,7 @@ step "Installing Python dependencies"
 ./venv/bin/python3 -m pip install -r requirements.txt --quiet
 grep -v '^\s*#' requirements.txt | grep -v '^\s*$' | sed 's/^/    /'
 
-step "Verifying dependencies"
+step "Verifying Python packages"
 ./venv/bin/python3 - <<'PY' || exit 1
 import importlib.util
 import sys
@@ -53,25 +48,40 @@ if missing:
 print("    all Python packages present")
 PY
 
-if [[ "$(uname -s)" == "Linux" ]]; then
-  step "Installing Chromium system libraries (needs sudo)"
-  if command -v sudo >/dev/null 2>&1; then
-    if sudo -n true 2>/dev/null || [[ -t 0 ]]; then
-      sudo ./venv/bin/playwright install-deps chromium || {
-        echo "    could not install system libraries automatically"
-        echo "    run manually: sudo ./venv/bin/playwright install-deps chromium"
-      }
-    else
-      echo "    skipped (no terminal for the sudo prompt)"
-      echo "    run manually: sudo ./venv/bin/playwright install-deps chromium"
-    fi
-  else
-    echo "    sudo not found — run as root: ./venv/bin/playwright install-deps chromium"
+install_chromium_stack() {
+  if [[ "$(uname -s)" == "Linux" ]]; then
+    step "Installing Chromium system libraries (sudo may prompt)"
+    run_privileged ./venv/bin/playwright install-deps chromium
   fi
-fi
 
-step "Installing Playwright Chromium"
-./venv/bin/playwright install chromium
+  step "Installing Playwright Chromium browser"
+  ./venv/bin/playwright install chromium
+}
+
+chromium_launches() {
+  ./venv/bin/python3 - <<'PY'
+import sys
+from playwright.sync_api import sync_playwright
+
+try:
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        browser.close()
+except Exception as exc:
+    print(f"error: Chromium launch failed: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+install_chromium_stack
+
+step "Verifying Chromium launches"
+if ! chromium_launches; then
+  echo "    Chromium failed — reinstalling browser stack and retrying..."
+  install_chromium_stack
+  chromium_launches || die "Chromium still will not launch. Check logs above."
+fi
+echo "    Chromium launches OK"
 
 if [[ ! -f config/ucf_credentials.env ]]; then
   step "Creating config/ucf_credentials.env"

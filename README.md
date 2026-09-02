@@ -13,19 +13,12 @@ Designed for **Linux / Raspberry Pi** (cron, headless). Also runs on macOS.
 ## Requirements
 
 - **Linux** (Raspberry Pi 4/5 recommended, 4 GB+ RAM) or macOS
-- **Python 3.10+** and `python3-venv`
-- **Playwright** + Chromium
 - **UCF account(s)** — `data/accounts/<nickname>.env` per person
 - **Google Calendar OAuth** — `config/credentials.json` + `config/token.json`
 - Pi **on during the morning run window** on run days (Fri, Sat, Sun, Mon, Tue) — typically ~7:25–8:35 AM
 - **Browser + RDP/SSH** for `./add-account.sh` (enter SMS 2FA manually on Linux)
 
-### Raspberry Pi OS packages
-
-```bash
-sudo apt update
-sudo apt install python3 python3-venv git
-```
+The curl installer automatically installs **git**, **Python 3**, **venv**, **Playwright**, and **Chromium** on Raspberry Pi OS / Debian. You may be prompted for your **sudo password** once during setup — no manual `apt install` needed.
 
 ## Quick start (GitHub → Pi)
 
@@ -57,7 +50,6 @@ Or run setup manually:
 
 ```bash
 ./setup.sh
-sudo ./venv/bin/playwright install-deps chromium
 ```
 
 Copy secrets onto the Pi (not in git):

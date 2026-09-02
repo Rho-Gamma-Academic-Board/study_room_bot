@@ -3,7 +3,8 @@
 #
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/Rho-Gamma-Academic-Board/study_room_bot/main/install.sh)"
 #
-# Clones (or updates) the repo, runs setup, then opens the menu.
+# Clones (or updates) the repo, installs system + Python deps, then opens the menu.
+# On Raspberry Pi OS / Debian, apt packages are installed automatically (sudo prompt).
 
 set -euo pipefail
 
@@ -19,16 +20,41 @@ ok()    { printf "%b\n" "${GREEN}  ok${RESET} ${DIM}$1${RESET}"; }
 die()   { printf "%b\n" "${RED}error:${RESET} $1" >&2; exit 1; }
 
 # When run through a pipe, stdin is the script itself. Reattach the terminal
-# so the interactive menu and password prompts still work. The subshell probe
-# keeps this from aborting where there is no controlling terminal (cron, CI).
+# so the interactive menu, sudo, and password prompts still work.
 if [[ ! -t 0 ]] && (exec < /dev/tty) 2>/dev/null; then
   exec < /dev/tty
 fi
 
+# --- Pre-clone: need git only (python/playwright handled after clone) ---
+bootstrap_git() {
+  if command -v git >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ "$(uname -s)" == "Linux" ]] && command -v apt-get >/dev/null 2>&1; then
+    info "Installing git (sudo may prompt for your password)"
+    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+      apt-get update -qq
+      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates git
+    elif command -v sudo >/dev/null 2>&1; then
+      sudo apt-get update -qq
+      DEBIAN_FRONTEND=noninteractive sudo apt-get install -y ca-certificates git
+    else
+      die "git is required. Run as root or install git, then retry."
+    fi
+    return 0
+  fi
+  if [[ "$(uname -s)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
+    info "Installing git via Homebrew"
+    brew install git
+    return 0
+  fi
+  die "git is required and could not be installed automatically"
+}
+
 info "Checking prerequisites"
-command -v git >/dev/null 2>&1 || die "git is required. On Raspberry Pi OS: sudo apt install git"
-command -v python3 >/dev/null 2>&1 || die "python3 is required. On Raspberry Pi OS: sudo apt install python3 python3-venv"
-ok "git and python3 found"
+bootstrap_git
+command -v git >/dev/null 2>&1 || die "git is required"
+ok "git found"
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   info "Updating existing install at $INSTALL_DIR"
@@ -45,26 +71,13 @@ fi
 cd "$INSTALL_DIR"
 chmod +x ./*.sh scripts/*.sh 2>/dev/null || true
 
-# Run setup unless a working venv with the dependencies is already in place.
-venv_ready() {
-  [[ -x ./venv/bin/python3 ]] || return 1
-  ./venv/bin/python3 - <<'PY' >/dev/null 2>&1
-import importlib.util
-import sys
+info "Installing system packages (sudo may prompt on Raspberry Pi / Debian)"
+./scripts/ensure-system.sh
+ok "system packages ready"
 
-sys.exit(0 if all(importlib.util.find_spec(m) for m in
-    ("playwright", "googleapiclient", "google_auth_oauthlib")) else 1)
-PY
-}
-
-if venv_ready; then
-  ok "venv and dependencies already installed"
-else
-  info "Installing venv, Python dependencies, and Chromium"
-  ./setup.sh
-  venv_ready || die "setup finished but dependencies are still missing"
-  ok "dependencies installed"
-fi
+info "Setting up Python, Playwright, and Chromium"
+./setup.sh
+ok "environment ready"
 
 printf '\n'
 if [[ ! -f config/credentials.json || ! -f config/token.json ]] \
