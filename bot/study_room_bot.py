@@ -415,7 +415,6 @@ def add_booking_to_calendar(
     start_hhmm: str = "12:00",
     end_hhmm: str = "14:00",
     time_label: str = "12:00pm–2:00pm",
-    include_checkin_description: bool = False,
 ) -> bool:
     """
     Create a Google Calendar event for the study room booking.
@@ -484,25 +483,20 @@ def add_booking_to_calendar(
         # UCF is in Eastern; let the timeZone field handle EST/EDT automatically
         start = f"{date_str}T{start_hhmm}:00"
         end = f"{date_str}T{end_hhmm}:00"
-        summary = f"Study room: {room_name}"
-        if checkin_code:
-            summary += f" ({checkin_code})"
+        summary = parse_room_name_from_title(room_name)
         event = {
             "summary": summary,
             "start": {"dateTime": start, "timeZone": "America/New_York"},
             "end": {"dateTime": end, "timeZone": "America/New_York"},
         }
-        if checkin_link:
-            event["location"] = unwrap_checkin_link(checkin_link)
-        if include_checkin_description:
-            desc_parts = []
-            if checkin_code:
-                desc_parts.append(f"Check-in code: {checkin_code}")
-            link = unwrap_checkin_link(checkin_link)
-            if link:
-                desc_parts.append(f"Check-in link: {link}")
-            if desc_parts:
-                event["description"] = "\n".join(desc_parts)
+        desc_parts = []
+        if checkin_code:
+            desc_parts.append(f"Check-in Code: {checkin_code}")
+        link = unwrap_checkin_link(checkin_link)
+        if link:
+            desc_parts.append(f"Check-in link: {link}")
+        if desc_parts:
+            event["description"] = "\n".join(desc_parts)
         created = service.events().insert(calendarId=calendar_id, body=event).execute()
         print(f"Google Calendar event created: {created.get('htmlLink', created.get('id', 'ok'))}")
         return True
@@ -674,7 +668,6 @@ def notify_booking(
     start_hhmm: str = "12:00",
     end_hhmm: str = "14:00",
     time_label: str = "12:00pm–2:00pm",
-    include_checkin_description: bool = False,
 ) -> None:
     """Try to add a Google Calendar event, then fallback to email to BOOKING_EMAIL."""
     print("Sending reminder (Google Calendar or email)...")
@@ -686,7 +679,6 @@ def notify_booking(
         start_hhmm=start_hhmm,
         end_hhmm=end_hhmm,
         time_label=time_label,
-        include_checkin_description=include_checkin_description,
     ):
         print(f"Added event to Google Calendar: {room_name} on {date_str} {time_label}. Check your calendar/reminders.")
     elif send_booking_email(room_name, date_str):
