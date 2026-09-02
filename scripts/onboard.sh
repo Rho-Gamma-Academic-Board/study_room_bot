@@ -37,20 +37,17 @@ say ""
 
 # --- Google OAuth file ---
 step "1/4  Google OAuth credentials"
-if [[ ! -f "$ROOT/config/credentials.json" ]]; then
-  say "Copy your Google OAuth Desktop client JSON to:"
-  say "  ${BOLD}$ROOT/config/credentials.json${RESET}"
-  say ""
-  say "Get it from: Google Cloud Console → APIs & Services → Credentials"
-  say "Create an OAuth 2.0 Client ID (Desktop app), download JSON, rename it."
-  say ""
-  read -r -p "Press Enter when credentials.json is in config/ (or Ctrl+C to exit)... "
-  if [[ ! -f "$ROOT/config/credentials.json" ]]; then
-    say "${RED}Still missing config/credentials.json — add it and re-run ./onboard.sh${RESET}"
-    exit 1
+if [[ -f "$ROOT/config/credentials.json" ]]; then
+  say "${GREEN}  ok${RESET} config/credentials.json found"
+  read -r -p "Replace credentials.json? [y/N] " replace
+  if [[ "$replace" =~ ^[Yy]$ ]]; then
+    "$ROOT/import-google-credentials.sh" || exit 1
   fi
 else
-  say "${GREEN}  ok${RESET} config/credentials.json found"
+  say "You need a Google OAuth Desktop client JSON from Google Cloud Console."
+  say "${DIM}APIs & Services → Credentials → Create OAuth client → Desktop app → Download JSON${RESET}"
+  say ""
+  "$ROOT/import-google-credentials.sh" || exit 1
 fi
 
 # --- Calendar config ---

@@ -245,6 +245,7 @@ show_status() {
     status_ok "Google OAuth credentials found"
   else
     status_warn "Missing config/credentials.json"
+    say " ${DIM}→ Use menu ${GOLD}[ 7 ]${DIM} to paste Google OAuth JSON${RESET}"
   fi
 
   if [[ -f "$ROOT/config/token.json" ]]; then
@@ -327,8 +328,21 @@ run_choice() {
     7)
       if ! is_setup_done; then
         status_warn "Dependencies missing — run ./setup.sh"
+      elif [[ ! -f "$ROOT/config/credentials.json" ]]; then
+        status_warn "Missing config/credentials.json"
+        say " ${DIM}→ Paste your Google OAuth JSON now${RESET}"
+        "$ROOT/import-google-credentials.sh" || true
       else
-        "$ROOT/venv/bin/python3" "$ROOT/bot/auth_google_calendar.py" || true
+        printf "%b" "${PAD} ${GOLD}[1]${RESET} Sign in to Google Calendar  ${GOLD}[2]${RESET} Replace credentials.json  ${GOLD}[0]${RESET} Back: "
+        read -r gchoice
+        case "$gchoice" in
+          2)
+            "$ROOT/import-google-credentials.sh" || true
+            ;;
+          1|"")
+            "$ROOT/venv/bin/python3" "$ROOT/bot/auth_google_calendar.py" || true
+            ;;
+        esac
       fi
       ;;
     8)

@@ -57,7 +57,7 @@ Copy secrets onto the Pi (not in git):
 | File | Purpose |
 |------|---------|
 | `config/ucf_credentials.env` | Calendar name, shared settings (`config/ucf_credentials.env.example`) |
-| `config/credentials.json` | Google OAuth Desktop client |
+| `config/credentials.json` | Google OAuth Desktop client (paste via `./import-google-credentials.sh`) |
 | `data/accounts/<nickname>.env` | Per-person UCF login (`data/accounts/example.env`) |
 
 Then:
@@ -79,6 +79,7 @@ Access the Pi over **Tailscale** for RDP/SSH when adding accounts.
 | `./start.sh` | Interactive menu (setup, accounts, cron, run bot) |
 | `./onboard.sh` | Guided wizard — calendar, accounts, cron in one flow |
 | `./setup.sh` | Create venv, install deps, install Chromium |
+| `./import-google-credentials.sh` | Paste or import Google OAuth `credentials.json` |
 | `./add-account.sh` | Create account + browser sign-in |
 | `./sign-in.sh <id>` | Re-auth saved session |
 | `./remove-account.sh <id>` | Remove account + profile |
