@@ -51,6 +51,7 @@ CLOSE_AFTER_SECONDS = int(os.environ.get("CLOSE_AFTER_SECONDS", "60"))
 RUN_HEADLESS = os.environ.get("RUN_HEADLESS", "").strip().lower() in ("1", "true", "yes")
 RUN_HEADLESS_TEST = os.environ.get("RUN_HEADLESS_TEST", "").strip().lower() in ("1", "true", "yes")
 PIPELINE_TEST = os.environ.get("PIPELINE_TEST", "").strip().lower() in ("1", "true", "yes")
+BRUTE_RUN = os.environ.get("BRUTE_RUN", "").strip().lower() in ("1", "true", "yes")
 
 # Read UCF SMS codes from iMessage on macOS (enabled by default on Darwin).
 _USE_IMESSAGE_DEFAULT = "1" if sys.platform == "darwin" else "0"

@@ -31,6 +31,7 @@ from shared.config import (
     OUTLOOK_INBOX_URL,
     OUTLOOK_WAIT_SECONDS,
     PIPELINE_TEST,
+    BRUTE_RUN,
     RUN_HEADLESS,
     RUN_HEADLESS_TEST,
     USE_IMESSAGE_2FA,
@@ -1352,7 +1353,9 @@ def book_room():
     used_account_ids: set[str] = set()
 
     print(f"Target date: {target_date} (today + {DAYS_AHEAD} days)")
-    if not PIPELINE_TEST and not target_is_weekday(target_date):
+    if BRUTE_RUN:
+        print("BRUTE_RUN=1: booking regardless of weekday (manual test run).")
+    elif not PIPELINE_TEST and not target_is_weekday(target_date):
         print(f"Skipping {target_date} — weekend study rooms are disabled (Mon–Fri only).")
         return
     if PIPELINE_TEST:
