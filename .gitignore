@@ -1,0 +1,21 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Credentials and secrets (never commit)
+.env
+ucf_credentials.env
+credentials.json
+token.json
+playwright-profile/
+playwright-profiles/
+accounts/*.env
+!accounts/example.env
+account_usage.json
+
+# Logs
+*.log
+
+# macOS
+.DS_Store

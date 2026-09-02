@@ -1,0 +1,58 @@
+"""Configuration loaded from environment and ucf_credentials.env."""
+
+import os
+import sys
+from datetime import datetime, timedelta
+
+_SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_CREDS_FILE = os.path.join(_SCRIPT_DIR, "ucf_credentials.env")
+
+if os.path.exists(_CREDS_FILE):
+    with open(_CREDS_FILE) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                key, value = key.strip(), value.strip()
+                if key and value and key not in os.environ:
+                    os.environ[key] = value
+
+PUBLIC_NAME = os.environ.get("PUBLIC_NAME", "Student")
+UCF_ID = os.environ.get("UCF_ID", "")
+
+UCF_EMAIL = os.environ.get("UCF_EMAIL", "")
+UCF_PASSWORD = os.environ.get("UCF_PASSWORD", "")
+UCF_2FA_SENDER = os.environ.get("UCF_2FA_SENDER", "69525")
+
+OUTLOOK_EMAIL = os.environ.get("OUTLOOK_EMAIL", UCF_EMAIL)
+OUTLOOK_INBOX_URL = "https://outlook.office.com/mail/inbox"
+OUTLOOK_WAIT_SECONDS = int(os.environ.get("OUTLOOK_WAIT_SECONDS", "30"))
+
+BOOKING_EMAIL = os.environ.get("BOOKING_EMAIL", "")
+STUDY_ROOMS_CALENDAR_NAME = os.environ.get("STUDY_ROOMS_CALENDAR_NAME", "Academic Board - Study Rooms")
+STUDY_ROOMS_CALENDAR_DESCRIPTION = os.environ.get(
+    "STUDY_ROOMS_CALENDAR_DESCRIPTION", "Academic Board study rooms"
+)
+GOOGLE_CREDENTIALS_FILE = os.path.join(
+    _SCRIPT_DIR, os.environ.get("GOOGLE_CREDENTIALS_FILE", "credentials.json")
+)
+GOOGLE_TOKEN_FILE = os.path.join(_SCRIPT_DIR, os.environ.get("GOOGLE_TOKEN_FILE", "token.json"))
+
+LIBCAL_RESERVE_URL = "https://ucf.libcal.com/reserve/largestudyrooms"
+LIBCAL_SENDER = "alerts@mail.libcal.com"
+LIBCAL_CONFIRMATION_SUBJECT = "Your booking has been submitted"
+
+DAYS_AHEAD = int(os.environ.get("DAYS_AHEAD", "3"))
+CLOSE_AFTER_SECONDS = int(os.environ.get("CLOSE_AFTER_SECONDS", "60"))
+
+RUN_HEADLESS = os.environ.get("RUN_HEADLESS", "").strip().lower() in ("1", "true", "yes")
+RUN_HEADLESS_TEST = os.environ.get("RUN_HEADLESS_TEST", "").strip().lower() in ("1", "true", "yes")
+PIPELINE_TEST = os.environ.get("PIPELINE_TEST", "").strip().lower() in ("1", "true", "yes")
+
+# macOS only: read UCF SMS codes from iMessage. Off by default on Linux/Pi.
+_USE_IMESSAGE_DEFAULT = "1" if sys.platform == "darwin" else "0"
+USE_IMESSAGE_2FA = os.environ.get("USE_IMESSAGE_2FA", _USE_IMESSAGE_DEFAULT).strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
