@@ -273,7 +273,7 @@ show_menu() {
   menu_item "3" "REMOVE ACCOUNT" "delete credentials + profile"
   menu_item "4" "INSTALL SCHEDULE" "LaunchAgent morning window"
   menu_item "5" "UNINSTALL SCHEDULE" "remove LaunchAgent"
-  menu_item "6" "RUN BOT NOW" "brute-force test (any day)"
+  menu_item "6" "RUN BOT NOW" "test run (any day, live output)"
   menu_item "7" "GOOGLE CALENDAR" "OAuth sign-in"
   menu_item "8" "RE-SIGN IN UCF" "refresh browser session"
   menu_item "9" "SETUP WIZARD" "first-time: calendar, accounts, schedule"

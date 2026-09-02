@@ -1,5 +1,5 @@
 #!/bin/bash
-# Manual brute-force run — bypasses weekday checks, prints to terminal.
+# Manual test run — no weekday restrictions, live terminal output.
 # Usage: ./run-bot-now.sh
 
 set -euo pipefail
@@ -8,8 +8,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
-export BRUTE_RUN=1
 export RUN_HEADLESS=1
+unset SCHEDULED_RUN
 export PATH="$ROOT/venv/bin:/usr/local/bin:/usr/bin:/bin"
 
 if [[ ! -x "$ROOT/venv/bin/python3" ]]; then
