@@ -101,7 +101,7 @@ def main() -> None:
         if accounts:
             print("Available accounts:")
             for account in accounts:
-                print(f"  - {account.id} ({account.ucf_email})")
+                print(f"  - {account.id} ({account.masked_email})")
         else:
             print("No accounts found. Create accounts/<name>.env from accounts/example.env")
         raise SystemExit(1)
@@ -123,7 +123,7 @@ def main() -> None:
     public_name = prompt_public_name(account)
     account = replace(account, public_name=public_name)
 
-    print(f"Account:  {account.ucf_email}")
+    print(f"Account:  {account.id} ({account.masked_email})")
     print(f"Profile:  {profile_dir}")
     print()
     print("A browser window will open (not headless).")

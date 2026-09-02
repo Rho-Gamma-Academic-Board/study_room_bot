@@ -15,6 +15,7 @@ from playwright.sync_api import sync_playwright
 from shared.accounts import (
     booking_hours_from_window,
     load_accounts,
+    mask_email,
     pick_account,
     record_booking,
 )
@@ -590,7 +591,7 @@ def get_room_and_code_from_outlook(page, account) -> tuple[str, str, str]:
 
         # If we hit a login page, we can't proceed
         if "login" in page.url.lower() or "signin" in page.url.lower():
-            print(f"Outlook: not signed in in this browser; open Outlook and sign in with {account.outlook} for future runs.")
+            print(f"Outlook: not signed in in this browser; open Outlook and sign in as {account.id} ({account.masked_outlook}) for future runs.")
             return ("", "", "")
 
         # Search for emails from LibCal with subject "Your booking has been submitted" (newest first)
@@ -688,7 +689,7 @@ def notify_booking(
     ):
         print(f"Added event to Google Calendar: {room_name} on {date_str} {time_label}. Check your calendar/reminders.")
     elif send_booking_email(room_name, date_str):
-        print(f"Sent booking reminder to {BOOKING_EMAIL}.")
+        print(f"Sent booking reminder to {mask_email(BOOKING_EMAIL)}.")
     else:
         print(f"Booking reminder: {room_name} on {date_str} {time_label}.")
         print("")
@@ -753,7 +754,7 @@ def ensure_logged_in(page, account, redirect_after_login=True):
     if not is_login_page(page):
         return
 
-    print(f"Detected login page: {page.url} (account: {account.ucf_email})")
+    print(f"Detected login page: {page.url} (account: {account.id})")
 
     if not (account.ucf_email and account.ucf_password):
         print("Set UCF_EMAIL and UCF_PASSWORD for this account.")
@@ -1388,7 +1389,7 @@ def book_room():
             print(f"Skipping {time_label}: no account with {hours:g}h capacity remaining.")
             continue
 
-        print(f"\n=== {target_room} {time_label} — account: {account.ucf_email} ({account.id}) ===")
+        print(f"\n=== {target_room} {time_label} — account: {account.id} ===")
         ok, room = book_one_window(
             account,
             target_date,

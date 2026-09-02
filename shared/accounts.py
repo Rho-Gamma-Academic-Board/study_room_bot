@@ -17,6 +17,21 @@ MAX_HOURS_PER_DAY = 4
 MAX_HOURS_PER_MONTH = 16
 
 
+def mask_email(email: str) -> str:
+    """
+    Partially hide an address for terminal and log output.
+
+    Logs are plaintext and get shared while debugging, so they should not
+    record who booked which room. Enough of the address survives to tell
+    accounts apart: alice@ucf.edu -> al***@ucf.edu
+    """
+    if not email or "@" not in email:
+        return email
+    local, _, domain = email.partition("@")
+    visible = local[:2] if len(local) > 2 else local[:1]
+    return f"{visible}***@{domain}"
+
+
 @dataclass
 class BookingAccount:
     """One UCF identity that can make LibCal reservations."""
@@ -31,6 +46,14 @@ class BookingAccount:
     @property
     def outlook(self) -> str:
         return self.outlook_email or self.ucf_email
+
+    @property
+    def masked_email(self) -> str:
+        return mask_email(self.ucf_email)
+
+    @property
+    def masked_outlook(self) -> str:
+        return mask_email(self.outlook)
 
     def profile_dir(self) -> str:
         return os.path.join(PROFILES_DIR, self.id)

@@ -9,6 +9,7 @@ Usage:
   venv/bin/python3 auth_google_calendar.py
 """
 
+from shared.accounts import mask_email
 from shared.config import (
     BOOKING_EMAIL,
     GOOGLE_CREDENTIALS_FILE,
@@ -35,7 +36,7 @@ def main() -> None:
         raise SystemExit(1)
 
     scopes = ["https://www.googleapis.com/auth/calendar"]
-    print(f"Booking email: {BOOKING_EMAIL}")
+    print(f"Booking email: {mask_email(BOOKING_EMAIL)}")
     print(f"Target calendar: {STUDY_ROOMS_CALENDAR_NAME}")
     print(f"Token will be saved to: {GOOGLE_TOKEN_FILE}")
     print()
