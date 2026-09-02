@@ -144,7 +144,7 @@ show_cron_status() {
     done <<< "$cron_lines"
     printf '\n'
     say " ${DIM}Runs 8 AM Fri–Tue → books Mon–Fri (3 days ahead)${RESET}"
-    say " ${DIM}Logs: ${GOLD_DIM}study_room_bot.log${RESET}"
+    say " ${DIM}Logs: ${GOLD_DIM}logs/study_room_bot.log${RESET}"
   else
     status_warn "No study room cron job installed"
     say " ${DIM}→ Use ${GOLD}[ 4 ]${DIM} to install (8 AM Fri–Tue, weekdays only)${RESET}"
@@ -167,11 +167,11 @@ list_accounts() {
   local ids
   ids="$(
     {
-      if [[ -d "$ROOT/accounts" ]]; then
-        find "$ROOT/accounts" -maxdepth 1 -name '*.env' ! -name 'example.env' -exec basename {} .env \; 2>/dev/null
+      if [[ -d "$ROOT/data/accounts" ]]; then
+        find "$ROOT/data/accounts" -maxdepth 1 -name '*.env' ! -name 'example.env' -exec basename {} .env \; 2>/dev/null
       fi
-      if [[ -d "$ROOT/playwright-profiles" ]]; then
-        find "$ROOT/playwright-profiles" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null
+      if [[ -d "$ROOT/data/profiles" ]]; then
+        find "$ROOT/data/profiles" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null
       fi
     } | sort -u
   )"
@@ -195,13 +195,13 @@ show_status() {
     status_warn "Dependencies missing — run ./setup.sh"
   fi
 
-  if [[ -f "$ROOT/credentials.json" ]]; then
+  if [[ -f "$ROOT/config/credentials.json" ]]; then
     status_ok "Google OAuth credentials found"
   else
-    status_warn "Missing credentials.json"
+    status_warn "Missing config/credentials.json"
   fi
 
-  if [[ -f "$ROOT/token.json" ]]; then
+  if [[ -f "$ROOT/config/token.json" ]]; then
     status_ok "Google Calendar signed in"
   else
     status_warn "Google Calendar not signed in"
@@ -275,13 +275,13 @@ run_choice() {
       ;;
     6)
       "$ROOT/run-bot.sh" || true
-      say " ${GREEN}Done.${RESET} Check ${GOLD_DIM}study_room_bot.log${RESET} for output."
+      say " ${GREEN}Done.${RESET} Check ${GOLD_DIM}logs/study_room_bot.log${RESET} for output."
       ;;
     7)
       if ! is_setup_done; then
         status_warn "Dependencies missing — run ./setup.sh"
       else
-        "$ROOT/venv/bin/python3" "$ROOT/auth_google_calendar.py" || true
+        "$ROOT/venv/bin/python3" "$ROOT/bot/auth_google_calendar.py" || true
       fi
       ;;
     8)

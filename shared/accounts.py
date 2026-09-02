@@ -7,10 +7,12 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 
-_SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ACCOUNTS_DIR = os.path.join(_SCRIPT_DIR, "accounts")
-USAGE_FILE = os.path.join(_SCRIPT_DIR, "account_usage.json")
-PROFILES_DIR = os.path.join(_SCRIPT_DIR, "playwright-profiles")
+from shared.paths import ACCOUNTS_DIR, CREDS_FILE, PROFILES_DIR, USAGE_FILE, as_str
+
+ACCOUNTS_DIR = as_str(ACCOUNTS_DIR)
+USAGE_FILE = as_str(USAGE_FILE)
+PROFILES_DIR = as_str(PROFILES_DIR)
+_LEGACY_CREDS = as_str(CREDS_FILE)
 
 # LibCal large study room limits (per patron)
 MAX_HOURS_PER_DAY = 4
@@ -110,7 +112,7 @@ def load_accounts() -> list[BookingAccount]:
     if accounts:
         return accounts
 
-    legacy = os.path.join(_SCRIPT_DIR, "ucf_credentials.env")
+    legacy = _LEGACY_CREDS
     if os.path.exists(legacy):
         account = _account_from_env(legacy)
         if account:

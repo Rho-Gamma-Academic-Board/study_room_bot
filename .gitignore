@@ -3,18 +3,19 @@ venv/
 __pycache__/
 *.pyc
 
-# Credentials and secrets (never commit)
-.env
-ucf_credentials.env
-credentials.json
-token.json
-playwright-profile/
-playwright-profiles/
-accounts/*.env
-!accounts/example.env
-account_usage.json
+# Runtime data (never commit)
+data/accounts/*.env
+!data/accounts/example.env
+data/profiles/
+data/account_usage.json
+
+# Secrets (never commit)
+config/ucf_credentials.env
+config/credentials.json
+config/token.json
 
 # Logs
+logs/
 *.log
 
 # macOS

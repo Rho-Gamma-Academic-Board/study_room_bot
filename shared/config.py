@@ -1,14 +1,19 @@
-"""Configuration loaded from environment and ucf_credentials.env."""
+"""Configuration loaded from environment and config/ucf_credentials.env."""
 
 import os
 import sys
-from datetime import datetime, timedelta
 
-_SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_CREDS_FILE = os.path.join(_SCRIPT_DIR, "ucf_credentials.env")
+from shared.paths import (
+    CREDS_FILE,
+    GOOGLE_CREDENTIALS_FILE as _GOOGLE_CREDENTIALS_PATH,
+    GOOGLE_TOKEN_FILE as _GOOGLE_TOKEN_PATH,
+    as_str,
+)
 
-if os.path.exists(_CREDS_FILE):
-    with open(_CREDS_FILE) as f:
+_CREDS_PATH = as_str(CREDS_FILE)
+
+if os.path.exists(_CREDS_PATH):
+    with open(_CREDS_PATH) as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
@@ -33,10 +38,8 @@ STUDY_ROOMS_CALENDAR_NAME = os.environ.get("STUDY_ROOMS_CALENDAR_NAME", "Academi
 STUDY_ROOMS_CALENDAR_DESCRIPTION = os.environ.get(
     "STUDY_ROOMS_CALENDAR_DESCRIPTION", "Academic Board study rooms"
 )
-GOOGLE_CREDENTIALS_FILE = os.path.join(
-    _SCRIPT_DIR, os.environ.get("GOOGLE_CREDENTIALS_FILE", "credentials.json")
-)
-GOOGLE_TOKEN_FILE = os.path.join(_SCRIPT_DIR, os.environ.get("GOOGLE_TOKEN_FILE", "token.json"))
+GOOGLE_CREDENTIALS_FILE = os.environ.get("GOOGLE_CREDENTIALS_FILE", as_str(_GOOGLE_CREDENTIALS_PATH))
+GOOGLE_TOKEN_FILE = os.environ.get("GOOGLE_TOKEN_FILE", as_str(_GOOGLE_TOKEN_PATH))
 
 LIBCAL_RESERVE_URL = "https://ucf.libcal.com/reserve/largestudyrooms"
 LIBCAL_SENDER = "alerts@mail.libcal.com"

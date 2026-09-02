@@ -15,8 +15,8 @@ Designed for **Linux / Raspberry Pi** (cron, headless). Also runs on macOS.
 - **Linux** (Raspberry Pi 4/5 recommended, 4 GB+ RAM) or macOS
 - **Python 3.10+** and `python3-venv`
 - **Playwright** + Chromium
-- **UCF account(s)** — `accounts/<name>.env` per person
-- **Google Calendar OAuth** — `credentials.json` + `token.json`
+- **UCF account(s)** — `data/accounts/<nickname>.env` per person
+- **Google Calendar OAuth** — `config/credentials.json` + `config/token.json`
 - Pi **on at 8:00 AM** on run days (Fri, Sat, Sun, Mon, Tue)
 - **Browser + RDP/SSH** for `./add-account.sh` (enter SMS 2FA manually on Linux)
 
@@ -58,15 +58,15 @@ Copy secrets onto the Pi (not in git):
 
 | File | Purpose |
 |------|---------|
-| `ucf_credentials.env` | Calendar name, shared settings (`ucf_credentials.env.example`) |
-| `credentials.json` | Google OAuth Desktop client |
-| `accounts/<name>.env` | Per-person UCF login (`accounts/example.env`) |
+| `config/ucf_credentials.env` | Calendar name, shared settings (`config/ucf_credentials.env.example`) |
+| `config/credentials.json` | Google OAuth Desktop client |
+| `data/accounts/<nickname>.env` | Per-person UCF login (`data/accounts/example.env`) |
 
 Then:
 
 ```bash
 ./add-account.sh              # repeat per person (RDP + browser)
-./venv/bin/python3 auth_google_calendar.py
+./venv/bin/python3 bot/auth_google_calendar.py
 ./install-cron.sh             # 8 AM Fri–Tue (weekday rooms)
 ./run-bot.sh                  # test once
 ```
@@ -87,19 +87,40 @@ Access the Pi over **Tailscale** for RDP/SSH when adding accounts.
 | `./uninstall-cron.sh` | Remove cron job |
 | `./run-bot.sh` | Run bot once (headless, logs to file) |
 
+## Project layout
+
+```
+study_room_bot/
+├── start.sh              # interactive menu (main entry)
+├── install.sh            # one-line remote installer
+├── setup.sh              # venv + dependencies
+├── add-account.sh        # shortcuts → scripts/
+├── bot/                  # Python application
+│   ├── study_room_bot.py
+│   ├── auth_ucf_account.py
+│   └── auth_google_calendar.py
+├── shared/               # shared Python modules
+├── scripts/              # shell scripts (called by root wrappers)
+├── data/
+│   ├── accounts/         # UCF logins (gitignored except example.env)
+│   └── profiles/         # browser sessions (gitignored)
+├── config/               # secrets + templates (real files gitignored)
+└── logs/                 # run output (gitignored)
+```
+
 ## Manual run
 
 ```bash
-RUN_HEADLESS=1 ./venv/bin/python3 study_room_bot.py
+RUN_HEADLESS=1 ./venv/bin/python3 bot/study_room_bot.py
 ```
 
 Force one account:
 
 ```bash
-ACCOUNT_ID=josh RUN_HEADLESS=1 ./venv/bin/python3 study_room_bot.py
+ACCOUNT_ID=josh RUN_HEADLESS=1 ./venv/bin/python3 bot/study_room_bot.py
 ```
 
-Logs: `study_room_bot.log`, `study_room_bot_error.log`
+Logs: `logs/study_room_bot.log`, `logs/study_room_bot_error.log`
 
 ## 2FA on Linux / Pi
 
@@ -121,7 +142,7 @@ Scheduled `./run-bot.sh` runs headless and relies on **saved cookies**. Re-run `
 
 ## What not to commit
 
-Git ignores: `venv/`, `accounts/*.env`, `playwright-profiles/`, `ucf_credentials.env`, `credentials.json`, `token.json`, `*.log`
+Git ignores: `venv/`, `data/accounts/*.env`, `data/profiles/`, `config/ucf_credentials.env`, `config/credentials.json`, `config/token.json`, `logs/`
 
 ## macOS (optional)
 

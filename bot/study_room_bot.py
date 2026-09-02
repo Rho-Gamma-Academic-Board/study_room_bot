@@ -1345,7 +1345,7 @@ def book_room():
 
     accounts = load_accounts()
     if not accounts:
-        print("No booking accounts found. Add accounts/*.env files (see accounts/example.env).")
+        print("No booking accounts found. Add data/accounts/*.env files (see data/accounts/example.env).")
         return
 
     forced_id = os.environ.get("ACCOUNT_ID", "").strip() or None
@@ -1411,10 +1411,12 @@ def book_room():
 
 def _headless_test():
     """Quick test: launch headless, load booking page, exit. Use RUN_HEADLESS_TEST=1."""
+    from shared.paths import PROFILES_DIR, as_str
+
     print("Headless test: launching browser...")
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
-            user_data_dir="playwright-profile",
+            user_data_dir=as_str(PROFILES_DIR / "_headless_test"),
             headless=True,
             args=[],
         )

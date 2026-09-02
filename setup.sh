@@ -73,21 +73,22 @@ fi
 step "Installing Playwright Chromium"
 ./venv/bin/playwright install chromium
 
-if [[ ! -f ucf_credentials.env ]]; then
-  step "Creating ucf_credentials.env"
-  cp ucf_credentials.env.example ucf_credentials.env
+if [[ ! -f config/ucf_credentials.env ]]; then
+  step "Creating config/ucf_credentials.env"
+  mkdir -p config data/accounts data/profiles logs
+  cp config/ucf_credentials.env.example config/ucf_credentials.env
   echo "    created from example — edit before running"
 fi
 
-chmod +x ./*.sh 2>/dev/null || true
+chmod +x ./*.sh scripts/*.sh 2>/dev/null || true
 
 cat <<'EOF'
 
 Setup complete. Next steps:
   ./start.sh                              # interactive menu
-  1. Edit ucf_credentials.env
-  2. Add credentials.json (Google OAuth)
+  1. Edit config/ucf_credentials.env
+  2. Add config/credentials.json (Google OAuth)
   3. ./add-account.sh                     # browser sign-in, SMS 2FA on Pi
-  4. ./venv/bin/python3 auth_google_calendar.py
+  4. ./venv/bin/python3 bot/auth_google_calendar.py
   5. ./install-cron.sh
 EOF

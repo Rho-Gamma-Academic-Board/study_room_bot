@@ -103,18 +103,14 @@ def main() -> None:
             for account in accounts:
                 print(f"  - {account.id} ({account.masked_email})")
         else:
-            print("No accounts found. Create accounts/<name>.env from accounts/example.env")
+            print("No accounts found. Create data/accounts/<name>.env from data/accounts/example.env")
         raise SystemExit(1)
 
     account = find_account(args.account_id)
     if not account:
-        env_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "accounts",
-            f"{args.account_id}.env",
-        )
+        env_path = os.path.join(ACCOUNTS_DIR, f"{args.account_id}.env")
         print(f"Account '{args.account_id}' not found.")
-        print(f"Create {env_path} first (see accounts/example.env).")
+        print(f"Create {env_path} first (see data/accounts/example.env).")
         raise SystemExit(1)
 
     profile_dir = account.profile_dir()
@@ -169,7 +165,7 @@ def main() -> None:
 
         print()
         print(f"Done. Cookies stored in: {profile_dir}")
-        print(f"Run bookings with: ACCOUNT_ID={account.id} RUN_HEADLESS=1 venv/bin/python3 study_room_bot.py")
+        print(f"Run bookings with: ACCOUNT_ID={account.id} RUN_HEADLESS=1 venv/bin/python3 bot/study_room_bot.py")
         wait_for_enter("Press Enter to close the browser... ")
         context.close()
 
