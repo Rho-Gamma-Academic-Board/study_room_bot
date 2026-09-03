@@ -22,8 +22,8 @@ import study_room_bot as bot
 from shared.accounts import ACCOUNTS_DIR, load_accounts
 from shared.config import LIBCAL_RESERVE_URL, OUTLOOK_INBOX_URL
 
-AUTH_TIMEOUT_SECONDS = 300
-COOKIE_SETTLE_SECONDS = 3
+AUTH_TIMEOUT_SECONDS = 180
+COOKIE_SETTLE_SECONDS = 2
 
 
 def find_account(account_id: str):
@@ -68,40 +68,53 @@ def prompt_public_name(account) -> str:
 
 
 def save_libcal_session(page, account) -> bool:
-    print("Opening LibCal — complete 2FA in the browser if prompted.")
+    print("Step 1/2: LibCal — complete 2FA in the browser if prompted.")
     page.goto(LIBCAL_RESERVE_URL, wait_until="domcontentloaded", timeout=60000)
     time.sleep(2)
 
     if bot.is_login_page(page) or not bot.is_libcal_ready(page):
         bot.ensure_logged_in(page, account, redirect_after_login=False, interactive=False)
 
-    if not bot.wait_for_site_ready(page, bot.is_libcal_ready, AUTH_TIMEOUT_SECONDS):
+    if not bot.wait_for_site_ready(
+        page, bot.is_libcal_ready, AUTH_TIMEOUT_SECONDS, label="LibCal"
+    ):
         return False
 
     if "largestudyrooms" not in page.url.lower():
-        page.goto(LIBCAL_RESERVE_URL, wait_until="networkidle", timeout=60000)
+        page.goto(LIBCAL_RESERVE_URL, wait_until="domcontentloaded", timeout=60000)
 
-    if not bot.wait_for_site_ready(page, bot.is_libcal_ready, 60):
+    if not bot.wait_for_site_ready(page, bot.is_libcal_ready, 60, label="LibCal"):
         return False
 
     time.sleep(COOKIE_SETTLE_SECONDS)
-    return bot.is_libcal_ready(page)
+    print("LibCal session saved.")
+    return True
 
 
-def save_outlook_session(page) -> bool:
-    print("Opening Outlook — waiting for inbox to load.")
+def save_outlook_session(page, account) -> bool:
+    print("Step 2/2: Outlook — loading inbox.")
     page.goto(OUTLOOK_INBOX_URL, wait_until="domcontentloaded", timeout=60000)
-    time.sleep(2)
+    time.sleep(3)
 
-    if bot.is_login_page(page) or not bot.is_outlook_ready(page):
-        if bot.is_login_page(page):
-            print("Outlook needs sign-in — finish in the browser.")
+    if bot.is_login_page(page):
+        print("Outlook sign-in — complete 2FA in the browser if prompted.")
+        bot.ensure_logged_in(page, account, redirect_after_login=False, interactive=False)
 
-    if not bot.wait_for_site_ready(page, bot.is_outlook_ready, AUTH_TIMEOUT_SECONDS):
-        return False
+    if bot.wait_for_site_ready(
+        page, bot.is_outlook_ready, AUTH_TIMEOUT_SECONDS, label="Outlook"
+    ):
+        time.sleep(COOKIE_SETTLE_SECONDS)
+        print("Outlook session saved.")
+        return True
 
-    time.sleep(COOKIE_SETTLE_SECONDS)
-    return bot.is_outlook_ready(page)
+    # Lenient fallback: inbox URL without an active login redirect is good enough.
+    url = page.url.lower()
+    if "outlook.office.com" in url and not bot.is_login_page(page) and "signin" not in url:
+        time.sleep(COOKIE_SETTLE_SECONDS)
+        print("Outlook session saved.")
+        return True
+
+    return False
 
 
 def main() -> None:
@@ -137,26 +150,40 @@ def main() -> None:
     public_name = prompt_public_name(account)
     account = replace(account, public_name=public_name)
 
-    print(f"Signing in {account.id} — browser closes after LibCal and Outlook are fully loaded.")
+    print(f"Signing in {account.id} — browser closes when both steps finish.")
 
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=profile_dir,
-            headless=False,
-        )
-        page = context.new_page()
-        try:
-            if not save_libcal_session(page, account):
-                print("LibCal sign-in did not finish in time.")
-                raise SystemExit(1)
+    context = None
+    try:
+        with sync_playwright() as p:
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=profile_dir,
+                headless=False,
+            )
+            page = context.new_page()
+            try:
+                if not save_libcal_session(page, account):
+                    print("LibCal sign-in did not finish in time.")
+                    raise SystemExit(1)
 
-            if not save_outlook_session(page):
-                print("Outlook sign-in did not finish in time.")
-                raise SystemExit(1)
+                if not save_outlook_session(page, account):
+                    print("Outlook sign-in did not finish in time.")
+                    raise SystemExit(1)
 
-            print(f"Saved session for {account.id}.")
-        finally:
-            context.close()
+                print(f"Done — saved session for {account.id}.")
+            finally:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+                context.close()
+                context = None
+    except SystemExit:
+        if context is not None:
+            try:
+                context.close()
+            except Exception:
+                pass
+        raise
 
 
 if __name__ == "__main__":

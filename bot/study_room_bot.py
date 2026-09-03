@@ -754,25 +754,31 @@ def is_libcal_ready(page) -> bool:
 
 
 def is_outlook_ready(page) -> bool:
-    """True when Outlook inbox is loaded."""
-    if is_login_page(page):
-        return False
+    """True when Outlook web mail is loaded (lenient — UI changes often)."""
     url = page.url.lower()
-    if "outlook.office.com" not in url:
+    if "login.microsoftonline.com" in url or "login.live.com" in url:
         return False
-    try:
-        page.locator(
-            '[role="main"], [aria-label*="Message list" i], [aria-label*="Mail list" i]'
-        ).first.wait_for(state="visible", timeout=3000)
+    if is_login_page(page) and "outlook" not in url:
+        return False
+    if "outlook.office.com" not in url and "outlook.live.com" not in url:
+        return False
+    if "signin" in url or "/login" in url:
+        return False
+    if "/mail" in url or "/owa/" in url or "outlook.office.com" in url:
         return True
-    except Exception:
-        return "/mail" in url and not is_login_page(page)
+    return False
 
 
-def wait_for_site_ready(page, ready_check, timeout_seconds: int = 300) -> bool:
+def wait_for_site_ready(
+    page,
+    ready_check,
+    timeout_seconds: int = 300,
+    label: str = "site",
+) -> bool:
     """Poll until ready_check(page) is true for two consecutive checks."""
     deadline = time.time() + timeout_seconds
     stable = 0
+    last_status = 0.0
     while time.time() < deadline:
         if ready_check(page):
             stable += 1
@@ -780,6 +786,10 @@ def wait_for_site_ready(page, ready_check, timeout_seconds: int = 300) -> bool:
                 return True
         else:
             stable = 0
+            now = time.time()
+            if now - last_status >= 15:
+                print(f"Still waiting for {label}... ({page.url[:80]})")
+                last_status = now
         time.sleep(2)
     return ready_check(page)
 
