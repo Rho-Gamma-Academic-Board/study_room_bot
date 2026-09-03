@@ -24,6 +24,30 @@ from shared.config import LIBCAL_RESERVE_URL, OUTLOOK_INBOX_URL
 
 AUTH_TIMEOUT_SECONDS = 180
 COOKIE_SETTLE_SECONDS = 2
+OUTLOOK_URLS = (
+    "https://outlook.office.com/mail/",
+    OUTLOOK_INBOX_URL,
+    "https://outlook.office.com/owa/",
+)
+
+
+def navigate_with_retry(page, urls, label: str, attempts: int = 3) -> bool:
+    """Navigate with commit-level waits — Outlook often never reaches domcontentloaded."""
+    if isinstance(urls, str):
+        urls = (urls,)
+    for url in urls:
+        for attempt in range(1, attempts + 1):
+            try:
+                page.goto(url, wait_until="commit", timeout=90000)
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=15000)
+                except Exception:
+                    pass
+                return True
+            except Exception as exc:
+                print(f"{label}: load attempt {attempt}/{attempts} failed — {exc}")
+                time.sleep(3)
+    return False
 
 
 def find_account(account_id: str):
@@ -69,7 +93,8 @@ def prompt_public_name(account) -> str:
 
 def save_libcal_session(page, account) -> bool:
     print("Step 1/2: LibCal — complete 2FA in the browser if prompted.")
-    page.goto(LIBCAL_RESERVE_URL, wait_until="domcontentloaded", timeout=60000)
+    if not navigate_with_retry(page, LIBCAL_RESERVE_URL, "LibCal"):
+        return False
     time.sleep(2)
 
     if bot.is_login_page(page) or not bot.is_libcal_ready(page):
@@ -81,7 +106,7 @@ def save_libcal_session(page, account) -> bool:
         return False
 
     if "largestudyrooms" not in page.url.lower():
-        page.goto(LIBCAL_RESERVE_URL, wait_until="domcontentloaded", timeout=60000)
+        navigate_with_retry(page, LIBCAL_RESERVE_URL, "LibCal", attempts=2)
 
     if not bot.wait_for_site_ready(page, bot.is_libcal_ready, 60, label="LibCal"):
         return False
@@ -93,7 +118,11 @@ def save_libcal_session(page, account) -> bool:
 
 def save_outlook_session(page, account) -> bool:
     print("Step 2/2: Outlook — loading inbox.")
-    page.goto(OUTLOOK_INBOX_URL, wait_until="domcontentloaded", timeout=60000)
+    if not navigate_with_retry(page, OUTLOOK_URLS, "Outlook"):
+        print("Outlook navigation failed — checking if inbox loaded anyway...")
+        if not bot.is_outlook_ready(page):
+            return False
+
     time.sleep(3)
 
     if bot.is_login_page(page):
@@ -167,9 +196,15 @@ def main() -> None:
 
                 if not save_outlook_session(page, account):
                     print("Outlook sign-in did not finish in time.")
+                    print("LibCal cookies were saved — run ./sign-in.sh <id> to retry Outlook.")
                     raise SystemExit(1)
 
                 print(f"Done — saved session for {account.id}.")
+            except SystemExit:
+                raise
+            except Exception as exc:
+                print(f"Sign-in error: {exc}")
+                raise SystemExit(1) from exc
             finally:
                 try:
                     page.close()

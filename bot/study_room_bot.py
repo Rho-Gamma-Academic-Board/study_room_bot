@@ -581,7 +581,11 @@ def get_room_and_code_from_outlook(page, account) -> tuple[str, str, str]:
     checkin_link = ""
     try:
         # Open Outlook inbox (same browser = same UCF/Outlook session)
-        page.goto(OUTLOOK_INBOX_URL, wait_until="domcontentloaded", timeout=15000)
+        page.goto(OUTLOOK_INBOX_URL, wait_until="commit", timeout=30000)
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=10000)
+        except Exception:
+            pass
         time.sleep(4)
 
         # If we hit a login page, we can't proceed
