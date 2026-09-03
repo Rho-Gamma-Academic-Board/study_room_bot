@@ -12,6 +12,7 @@ import _bootstrap  # noqa: F401
 
 import argparse
 import os
+import subprocess
 import sys
 import time
 from dataclasses import replace
@@ -48,6 +49,27 @@ def navigate_with_retry(page, urls, label: str, attempts: int = 3) -> bool:
                 print(f"{label}: load attempt {attempt}/{attempts} failed — {exc}")
                 time.sleep(3)
     return False
+
+
+def release_profile_lock(profile_dir: str) -> None:
+    """Close a stuck Chromium using this profile so sign-in can start cleanly."""
+    marker = f"user-data-dir={profile_dir}"
+    try:
+        subprocess.run(
+            ["pkill", "-f", marker],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+    lock = os.path.join(profile_dir, "SingletonLock")
+    try:
+        if os.path.lexists(lock):
+            os.unlink(lock)
+    except OSError:
+        pass
+    time.sleep(1)
 
 
 def find_account(account_id: str):
@@ -98,7 +120,7 @@ def save_libcal_session(page, account) -> bool:
     time.sleep(2)
 
     if bot.is_login_page(page) or not bot.is_libcal_ready(page):
-        bot.ensure_logged_in(page, account, redirect_after_login=False, interactive=False)
+        bot.ensure_logged_in(page, account, redirect_after_login=False, interactive=True)
 
     if not bot.wait_for_site_ready(
         page, bot.is_libcal_ready, AUTH_TIMEOUT_SECONDS, label="LibCal"
@@ -127,7 +149,7 @@ def save_outlook_session(page, account) -> bool:
 
     if bot.is_login_page(page):
         print("Outlook sign-in — complete 2FA in the browser if prompted.")
-        bot.ensure_logged_in(page, account, redirect_after_login=False, interactive=False)
+        bot.ensure_logged_in(page, account, redirect_after_login=False, interactive=True)
 
     if bot.wait_for_site_ready(
         page, bot.is_outlook_ready, AUTH_TIMEOUT_SECONDS, label="Outlook"
