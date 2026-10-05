@@ -47,8 +47,12 @@ chmod 600 "$CONFIG_FILE"
 # Fri→Mon, Sat→Tue, Sun→Wed, Mon→Thu, Tue→Fri
 CRON_DOW="5,6,0,1,2"
 
+# LibCal opens at Eastern midnight — force America/New_York so UTC hosts still fire correctly.
+TZ_NAME="${BOOKING_TZ:-America/New_York}"
+
 # Inline env matches LaunchAgent EnvironmentVariables.
-BOOK_LINE="${BASE_MINUTE} ${SCHEDULE_HOUR} * * ${CRON_DOW} cd ${ROOT} && SCHEDULED_RUN=1 TARGET_ROOM=360H DAYS_AHEAD=3 AUTO_SCRAPE=1 CLOSE_AFTER_SECONDS=5 RUN_HEADLESS=1 OUTLOOK_SCRAPE_ACCOUNT=Josh PATH=\"${ROOT}/venv/bin:/usr/local/bin:/usr/bin:/bin\" ${RUN_BOT} >>${ROOT}/logs/cron.out.log 2>>${ROOT}/logs/cron.err.log"
+BOOK_LINE="CRON_TZ=${TZ_NAME}
+${BASE_MINUTE} ${SCHEDULE_HOUR} * * ${CRON_DOW} cd ${ROOT} && SCHEDULED_RUN=1 TARGET_ROOM=360H DAYS_AHEAD=3 AUTO_SCRAPE=1 CLOSE_AFTER_SECONDS=5 RUN_HEADLESS=1 OUTLOOK_SCRAPE_ACCOUNT=Josh TZ=${TZ_NAME} PATH=\"${ROOT}/venv/bin:/usr/local/bin:/usr/bin:/bin\" ${RUN_BOT} >>${ROOT}/logs/cron.out.log 2>>${ROOT}/logs/cron.err.log"
 
 cron_install_block "$CRON_BOOK_TAG" "$BOOK_LINE"
 
@@ -67,8 +71,9 @@ fi
 printf '\nInstalled cron (weekday rooms only — no Sat/Sun bookings):\n'
 printf '  tag: #%s\n' "$CRON_BOOK_TAG"
 printf '\nSchedule: Fri→Mon, Sat→Tue, Sun→Wed, Mon→Thu, Tue→Fri\n'
-printf 'Run window: ~%02d:%02d–%02d:%02d (random delay each night, up to %s min)\n' \
-  "$SCHEDULE_HOUR" "$BASE_MINUTE" "$end_hour" "$end_min" "$JITTER_MINUTES"
+printf 'Timezone: %s (LibCal midnight)\n' "$TZ_NAME"
+printf 'Run window: ~%02d:%02d–%02d:%02d %s (random delay each night, up to %s min)\n' \
+  "$SCHEDULE_HOUR" "$BASE_MINUTE" "$end_hour" "$end_min" "$TZ_NAME" "$JITTER_MINUTES"
 printf 'Target: 360H preferred, 12pm–10pm, 3 accounts, DAYS_AHEAD=3\n'
 printf 'After book: auto Outlook scrape → Google Calendar (also polls every 5 min)\n'
 printf 'Config: %s\n' "$CONFIG_FILE"

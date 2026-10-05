@@ -25,7 +25,9 @@ fi
 mkdir -p "$ROOT/logs"
 
 # */N needs N that divides 60 cleanly for predictable polls.
-SCRAPE_LINE="*/${INTERVAL_MINUTES} * * * * cd ${ROOT} && OUTLOOK_SCRAPE_ACCOUNT=Josh PATH=\"${ROOT}/venv/bin:/usr/local/bin:/usr/bin:/bin\" ${SCRAPE} --once --wait 0 >>${ROOT}/logs/outlook-scrape.out.log 2>>${ROOT}/logs/outlook-scrape.err.log"
+TZ_NAME="${BOOKING_TZ:-America/New_York}"
+SCRAPE_LINE="CRON_TZ=${TZ_NAME}
+*/${INTERVAL_MINUTES} * * * * cd ${ROOT} && OUTLOOK_SCRAPE_ACCOUNT=Josh TZ=${TZ_NAME} PATH=\"${ROOT}/venv/bin:/usr/local/bin:/usr/bin:/bin\" ${SCRAPE} --once --wait 0 >>${ROOT}/logs/outlook-scrape.out.log 2>>${ROOT}/logs/outlook-scrape.err.log"
 
 cron_install_block "$CRON_SCRAPE_TAG" "$SCRAPE_LINE"
 
