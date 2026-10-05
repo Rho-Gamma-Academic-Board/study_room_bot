@@ -1,5 +1,5 @@
 #!/bin/bash
-# First-time setup on macOS.
+# First-time setup (macOS or Linux).
 # Creates the venv, installs Python dependencies, Playwright, and Chromium.
 # Safe to run repeatedly (idempotent). Usage: ./setup.sh
 
@@ -11,20 +11,28 @@ cd "$ROOT"
 step() { printf '\n==> %s\n' "$1"; }
 die()  { printf 'error: %s\n' "$1" >&2; exit 1; }
 
-if [[ "$(uname -s)" != "Darwin" ]]; then
-  die "setup.sh is macOS only"
-fi
+OS="$(uname -s)"
+case "$OS" in
+  Darwin|Linux) ;;
+  *) die "Unsupported OS: $OS (need macOS or Linux)" ;;
+esac
 
 ensure_python() {
   if python3 -c "import venv, ensurepip" >/dev/null 2>&1; then
     return 0
   fi
-  if command -v brew >/dev/null 2>&1; then
+  if [[ "$OS" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
     step "Installing Python via Homebrew"
     brew install python3
     return 0
   fi
-  die "Python 3 with venv is required. Run: xcode-select --install (or install Homebrew)"
+  if [[ "$OS" == "Linux" ]] && command -v apt-get >/dev/null 2>&1; then
+    step "Installing Python venv via apt"
+    sudo apt-get update -qq
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv python3-pip
+    return 0
+  fi
+  die "Python 3 with venv is required"
 }
 
 step "Checking Python"
@@ -63,6 +71,10 @@ print("    all Python packages present")
 PY
 
 step "Installing Playwright Chromium browser"
+if [[ "$OS" == "Linux" ]]; then
+  # System libs Playwright needs on Ubuntu/Debian.
+  ./venv/bin/playwright install-deps chromium || true
+fi
 ./venv/bin/playwright install chromium
 
 chromium_launches() {
@@ -98,7 +110,8 @@ fi
 
 chmod +x ./*.sh scripts/*.sh 2>/dev/null || true
 
-cat <<'EOF'
+if [[ "$OS" == "Darwin" ]]; then
+  cat <<'EOF'
 
 Setup complete. Next steps:
   ./scripts/install-intake-launchd.sh      # API on :8790
@@ -107,3 +120,13 @@ Setup complete. Next steps:
   ./install-launchd.sh                    # schedule auto-booking
   ./scripts/install-outlook-scrape-launchd.sh
 EOF
+else
+  cat <<'EOF'
+
+Setup complete. Next steps:
+  ./onboard.sh                            # guided wizard (SA + Outlook + schedule)
+  ./install-cron.sh                       # midnight book + 5-min Outlook scrape
+  ./run-bot.sh --now                      # test booking
+  ./scrape-outlook.sh --once              # test calendar fill
+EOF
+fi
