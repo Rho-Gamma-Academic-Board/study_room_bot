@@ -24,8 +24,9 @@ account_count() {
     ! -name 'example.env' ! -name '*.example' 2>/dev/null | wc -l | tr -d ' '
 }
 
-if [[ "$(uname -s)" != "Darwin" ]]; then
-  say "${RED}This wizard is macOS only.${RESET}"
+OS="$(uname -s)"
+if [[ "$OS" != "Darwin" && "$OS" != "Linux" ]]; then
+  say "${RED}Unsupported OS: ${OS}${RESET}"
   exit 1
 fi
 
@@ -37,6 +38,7 @@ fi
 say ""
 say "${GOLD}${BOLD}OT Study Rooms — setup wizard${RESET}"
 say "${DIM}Calendar service account, LibCal cookies, board Outlook, schedule.${RESET}"
+say "${DIM}Host: ${OS} ($( [[ "$OS" == "Darwin" ]] && echo launchd || echo cron ))${RESET}"
 say ""
 
 step "1/4  Google Calendar (service account)"
@@ -89,14 +91,28 @@ if [[ -z "$outlook" || "$outlook" =~ ^[Yy]$ ]]; then
 fi
 
 step "4/4  Auto-booking schedule"
-if launchd_installed; then
-  say "${GREEN}  ok${RESET} LaunchAgent already installed"
-  say "    $(launchd_plist_path)"
+if [[ "$OS" == "Darwin" ]]; then
+  if launchd_installed; then
+    say "${GREEN}  ok${RESET} LaunchAgent already installed"
+    say "    $(launchd_plist_path)"
+  else
+    say "Install a randomized midnight run window (Fri–Tue → books Mon–Fri rooms)?"
+    read -r -p "Install LaunchAgent? [Y/n] " install
+    if [[ -z "$install" || "$install" =~ ^[Yy]$ ]]; then
+      "$ROOT/install-launchd.sh"
+    fi
+  fi
 else
-  say "Install a randomized morning run window (Fri–Tue → books Mon–Fri rooms)?"
-  read -r -p "Install LaunchAgent? [Y/n] " install
-  if [[ -z "$install" || "$install" =~ ^[Yy]$ ]]; then
-    "$ROOT/install-launchd.sh"
+  # shellcheck source=scripts/cron.sh
+  source "$ROOT/scripts/cron.sh"
+  if cron_block_installed "$CRON_BOOK_TAG"; then
+    say "${GREEN}  ok${RESET} cron already installed (#${CRON_BOOK_TAG})"
+  else
+    say "Install a randomized midnight cron window (Fri–Tue → books Mon–Fri rooms)?"
+    read -r -p "Install cron? [Y/n] " install
+    if [[ -z "$install" || "$install" =~ ^[Yy]$ ]]; then
+      "$ROOT/install-cron.sh"
+    fi
   fi
 fi
 

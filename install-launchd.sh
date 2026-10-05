@@ -17,8 +17,8 @@ BASE_MINUTE="${SCHEDULE_BASE_MINUTE:-$((1 + RANDOM % 4))}"  # :01–:04
 source "$ROOT/scripts/launchd.sh"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "error: launchd scheduling is macOS only" >&2
-  exit 1
+  echo "launchd is macOS only — installing Linux cron equivalent..." >&2
+  exec "$ROOT/install-cron.sh"
 fi
 
 if [[ ! -x "$RUN_BOT" ]]; then

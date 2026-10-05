@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Remove the study-room booking LaunchAgent.
+# Remove the study-room booking LaunchAgent (macOS).
+# On Linux, use ./uninstall-cron.sh
 # Usage: ./uninstall-launchd.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "launchd is macOS only — removing Linux cron equivalent..." >&2
+  exec "$ROOT/uninstall-cron.sh"
+fi
 
 # shellcheck source=scripts/launchd.sh
 source "$ROOT/scripts/launchd.sh"
