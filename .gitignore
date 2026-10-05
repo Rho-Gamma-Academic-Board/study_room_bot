@@ -6,14 +6,28 @@ __pycache__/
 # Runtime data (never commit)
 data/accounts/*.env
 !data/accounts/example.env
+!data/accounts/board.env.example
 data/profiles/
+data/storage_states/
+data/auth_probe_results.json
 data/account_usage.json
+data/gmail_processed.json
+data/outlook_processed.json
+data/verify/
+data/calendar_viewers.txt
 
 # Secrets (never commit)
 config/schedule.env
 config/ucf_credentials.env
 config/credentials.json
 config/token.json
+config/service-account.json
+config/*service*account*.json
+config/intake.env
+
+# Intake frontend (removed — chapter site owns UI)
+# web/node_modules/
+# web/dist/
 
 # Logs
 logs/

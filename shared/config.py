@@ -32,12 +32,16 @@ UCF_2FA_SENDER = os.environ.get("UCF_2FA_SENDER", "69525")
 OUTLOOK_EMAIL = os.environ.get("OUTLOOK_EMAIL", UCF_EMAIL)
 OUTLOOK_INBOX_URL = "https://outlook.office.com/mail/inbox"
 OUTLOOK_WAIT_SECONDS = int(os.environ.get("OUTLOOK_WAIT_SECONDS", "30"))
+# Optional custom folder. Empty / unset = scrape normal Inbox (recommended).
+OUTLOOK_STUDY_ROOM_FOLDER = os.environ.get("OUTLOOK_STUDY_ROOM_FOLDER", "").strip()
 
 BOOKING_EMAIL = os.environ.get("BOOKING_EMAIL", "")
 STUDY_ROOMS_CALENDAR_NAME = os.environ.get("STUDY_ROOMS_CALENDAR_NAME", "Academic Board - Study Rooms")
 STUDY_ROOMS_CALENDAR_DESCRIPTION = os.environ.get(
     "STUDY_ROOMS_CALENDAR_DESCRIPTION", "Academic Board study rooms"
 )
+# Preferred for service accounts (shared calendars often omit from calendarList).
+STUDY_ROOMS_CALENDAR_ID = os.environ.get("STUDY_ROOMS_CALENDAR_ID", "").strip()
 GOOGLE_CREDENTIALS_FILE = os.environ.get("GOOGLE_CREDENTIALS_FILE", as_str(_GOOGLE_CREDENTIALS_PATH))
 GOOGLE_TOKEN_FILE = os.environ.get("GOOGLE_TOKEN_FILE", as_str(_GOOGLE_TOKEN_PATH))
 
@@ -60,3 +64,16 @@ USE_IMESSAGE_2FA = os.environ.get("USE_IMESSAGE_2FA", _USE_IMESSAGE_DEFAULT).str
     "true",
     "yes",
 )
+
+# Failure alerts (email) + Study Rooms rerun link
+ALERT_ENABLED = os.environ.get("ALERT_ENABLED", "1").strip().lower() in ("1", "true", "yes")
+ALERT_TO = os.environ.get("ALERT_TO", "thejoshperez@gmail.com").strip()
+ALERT_FROM = os.environ.get("ALERT_FROM", "").strip()
+ALERT_SMTP_HOST = os.environ.get("ALERT_SMTP_HOST", "smtp.gmail.com").strip()
+ALERT_SMTP_PORT = int(os.environ.get("ALERT_SMTP_PORT", "587"))
+ALERT_SMTP_USER = os.environ.get("ALERT_SMTP_USER", "").strip()
+ALERT_SMTP_PASSWORD = os.environ.get("ALERT_SMTP_PASSWORD", "").strip()
+CHAPTER_SITE_URL = os.environ.get(
+    "CHAPTER_SITE_URL",
+    "https://academic-board.vercel.app/academic",
+).strip()

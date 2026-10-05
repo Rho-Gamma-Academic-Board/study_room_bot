@@ -1,0 +1,36 @@
+{
+  "jobs": {
+    "scrape": {
+      "job": "scrape",
+      "ok": true,
+      "detail": "Created/updated 3 calendar event(s) from Inbox.",
+      "error": "",
+      "at": 1791226184.390317,
+      "at_iso": "2026-10-05T14:49:44-0400"
+    },
+    "book": {
+      "job": "book",
+      "ok": true,
+      "detail": "booking run finished",
+      "error": "",
+      "at": 1791198281.658302,
+      "at_iso": "2026-10-05T07:04:41-0400"
+    }
+  },
+  "last": {
+    "job": "scrape",
+    "ok": true,
+    "detail": "Created/updated 3 calendar event(s) from Inbox.",
+    "error": "",
+    "at": 1791226184.390317,
+    "at_iso": "2026-10-05T14:49:44-0400"
+  },
+  "last_failure": {
+    "job": "scrape",
+    "ok": false,
+    "detail": "Outlook session expired for Josh. Re-run bot/auth_board_outlook.py and sign in again.",
+    "error": "Outlook session expired for Josh. Re-run bot/auth_board_outlook.py and sign in again.",
+    "at": 1791226087.3424041,
+    "at_iso": "2026-10-05T14:48:07-0400"
+  }
+}

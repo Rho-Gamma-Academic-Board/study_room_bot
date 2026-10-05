@@ -37,6 +37,7 @@ from shared.config import (
     USE_IMESSAGE_2FA,
     STUDY_ROOMS_CALENDAR_NAME,
     STUDY_ROOMS_CALENDAR_DESCRIPTION,
+    STUDY_ROOMS_CALENDAR_ID,
     UCF_2FA_SENDER,
 )
 
@@ -65,6 +66,23 @@ PIPELINE_TEST_WINDOWS = [
     ("3:00pm", "15:00", "17:00", "3:00pm–5:00pm"),
     ("4:00pm", "16:00", "18:00", "4:00pm–6:00pm"),
 ]
+
+def navigate_libcal(page, url: str | None = None, label: str = "LibCal") -> bool:
+    """Navigate to LibCal with commit-level waits — networkidle often times out."""
+    target = url or BASE_URL
+    for attempt in range(1, 4):
+        try:
+            page.goto(target, wait_until="commit", timeout=90000)
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=15000)
+            except Exception:
+                pass
+            return True
+        except Exception as exc:
+            print(f"{label}: load attempt {attempt}/3 failed — {exc}")
+            time.sleep(3)
+    return False
+
 
 def wait_for_user(prompt: str = "Press Enter to continue..."):
     """Prompt user to press Enter, or skip if running headless or non-interactive."""
@@ -195,11 +213,36 @@ def discover_target_room(page, windows: list[tuple]) -> tuple[str | None, list[t
     """
     Pick the best capacity-10 room for 12pm–10pm coverage.
     Returns (room_name, windows_to_book) where windows_to_book is a subset of windows.
+
+    TARGET_ROOM env (e.g. 360H) is tried first for a full-day book before other rooms.
     """
     rooms = cap10_rooms_on_grid(page)
     if not rooms:
         print("No capacity-10 rooms on the grid for this date.")
         return None, []
+
+    forced = os.environ.get("TARGET_ROOM", "").strip()
+    if forced:
+        forced_match = next((r for r in rooms if rooms_match(r, forced)), None)
+        if forced_match:
+            print(f"TARGET_ROOM={forced} — checking {forced_match} first...")
+            if room_supports_all_windows(page, forced_match, windows):
+                print(f"Selected {forced_match} — full 12pm–10pm available.")
+                return forced_match, list(windows)
+            available = [
+                w
+                for w in windows
+                if room_supports_window(page, forced_match, w[0], w[2])
+            ]
+            if available:
+                print(
+                    f"Selected {forced_match} — {len(available)}/{len(windows)} "
+                    "window(s) available (partial)."
+                )
+                return forced_match, available
+            print(f"{forced_match} has no open 12pm–10pm windows; falling back.")
+        else:
+            print(f"TARGET_ROOM={forced} not on grid; falling back to preference order.")
 
     print(f"Scanning {len(rooms)} cap-10 room(s) for full 12pm–10pm availability...")
     print(f"Priority: {', '.join(PREFERRED_ROOMS)}, then other cap-10 large study rooms.")
@@ -239,26 +282,32 @@ def discover_target_room(page, windows: list[tuple]) -> tuple[str | None, list[t
     return None, []
 
 
+def prepare_libcal_grid(page, account) -> bool:
+    """Navigate to LibCal, sign in if needed, advance to target date, wait for grid."""
+    if not navigate_libcal(page):
+        return False
+    ensure_logged_in(page, account)
+    if is_login_page(page):
+        print(f"Session not authenticated for {account.id} — run ./sign-in.sh {account.id}")
+        return False
+    advance_days(page, DAYS_AHEAD)
+    page.wait_for_load_state("networkidle")
+    time.sleep(1.5)
+    if not wait_for_site_ready(page, is_libcal_ready, 60, label="LibCal"):
+        print("LibCal grid did not load.")
+        return False
+    return True
+
+
 def discover_target_room_for_account(account, windows: list[tuple]) -> tuple[str | None, list[tuple]]:
     """Open LibCal on the target date and discover the best cap-10 room."""
-    profile_dir = account.profile_dir()
-    os.makedirs(profile_dir, exist_ok=True)
+    from browser_session import open_account_context
 
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=profile_dir,
-            headless=RUN_HEADLESS,
-            args=["--start-maximized"] if not RUN_HEADLESS else [],
-        )
+    with open_account_context(account) as (_p, _browser, context):
         page = context.new_page()
-        page.goto(BASE_URL, wait_until="networkidle")
-        ensure_logged_in(page, account)
-        advance_days(page, DAYS_AHEAD)
-        page.wait_for_load_state("networkidle")
-        time.sleep(1.5)
-        result = discover_target_room(page, windows)
-        context.close()
-    return result
+        if not prepare_libcal_grid(page, account):
+            return None, []
+        return discover_target_room(page, windows)
 
 def get_2fa_from_imessage(sender_filter: str = UCF_2FA_SENDER, max_age_seconds: int = 120) -> str:
     """
@@ -386,25 +435,143 @@ def unwrap_checkin_link(url: str) -> str:
     return url
 
 
+def is_valid_checkin_link(url: str) -> bool:
+    """True only for real LibCal check-in/booking URLs (reject tracking junk)."""
+    if not url:
+        return False
+    cleaned = unwrap_checkin_link(url).strip()
+    lower = cleaned.lower()
+    if "libcal.com" not in lower:
+        return False
+    # Tracking / marketing / privacy pages sometimes appear in the same mail.
+    reject = (
+        "joinhandshake.com",
+        "springshare.com/privacy",
+        "google.com/calendar",
+        "mailto:",
+    )
+    if any(bad in lower for bad in reject):
+        return False
+    preferred = ("checkin", "check-in", "checkedin", "/r/checkin", "/booking/", "/reserve/")
+    return any(p in lower for p in preferred)
+
+
 def extract_checkin_link_from_email_text(text: str) -> str:
     """Pull a LibCal check-in URL from confirmation email text or HTML."""
     if not text:
         return ""
 
     urls = re.findall(r'https?://[^\s<>"\']+', text, re.IGNORECASE)
-    libcal_urls = []
+    candidates = []
     for url in urls:
-        cleaned = url.rstrip(".,);]>\"'")
-        if "libcal.com" in cleaned.lower():
-            libcal_urls.append(cleaned)
+        cleaned = unwrap_checkin_link(url.rstrip(".,);]>\"'"))
+        if is_valid_checkin_link(cleaned):
+            candidates.append(cleaned)
 
     preferred_patterns = ("checkin", "check-in", "checkedin", "/booking/", "/reserve/")
     for pattern in preferred_patterns:
-        for url in libcal_urls:
+        for url in candidates:
             if pattern in url.lower():
                 return url
 
-    return libcal_urls[0] if libcal_urls else ""
+    return candidates[0] if candidates else ""
+
+
+def flatten_confirmation_text(text: str) -> str:
+    """Normalize Outlook/LibCal HTML or wrapped text so regex can match the template."""
+    if not text:
+        return ""
+    text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", text)
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</(p|div|tr|li|h[1-6])>", "\n", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = (
+        text.replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+    )
+    return re.sub(r"[ \t]+", " ", text)
+
+
+def extract_checkin_code_from_email_text(text: str) -> str:
+    """
+    Parse LibCal confirmation body for the check-in code.
+
+    Standard line:
+      Enter the code 8E4 to check in.
+    """
+    collapsed = re.sub(r"\s+", " ", flatten_confirmation_text(text)).strip()
+    if not collapsed:
+        return ""
+    patterns = [
+        r"Enter the code\s+([A-Za-z0-9]{3,8})\s+to check[- ]?in",
+        r"Enter this code[:\s]+([A-Za-z0-9]{3,8})",
+        r"Enter the code\s+([A-Za-z0-9]{3,8})",
+        r"check[- ]?in(?:\s+with)?(?:\s+code)?[:\s]+([A-Za-z0-9]{3,8})",
+        r"code[:\s]+([A-Za-z0-9]{3,8})\s+to check[- ]?in",
+    ]
+    reject_codes = {
+        "INBOX",
+        "CODE",
+        "CHECK",
+        "ENTER",
+        "WITH",
+        "THIS",
+        "YOUR",
+        "ROOM",
+        "SPACE",
+        "HTTP",
+        "HTTPS",
+        "CANCELLA",
+        "CANCEL",
+        "BOOKING",
+        "SUBMIT",
+    }
+    for pattern in patterns:
+        m = re.search(pattern, collapsed, re.IGNORECASE)
+        if m:
+            code = m.group(1).strip().upper()
+            if code in reject_codes or not re.fullmatch(r"[A-Z0-9]{3,8}", code):
+                continue
+            return code
+    return ""
+
+
+def parse_booking_confirmation(text: str, expected_room: str = "") -> tuple[str, str, str]:
+    """
+    Parse room, check-in code, and check-in link from a LibCal confirmation
+    (page or email). Returns (room_str, code_str, checkin_link).
+    """
+    if not text:
+        return ("", "", "")
+
+    flattened = flatten_confirmation_text(text)
+    collapsed = re.sub(r"\s+", " ", flattened)
+
+    labeled = re.findall(
+        r"(?:Booking|Space|Location):\s*Room\s+(\d+[A-Za-z]*)",
+        collapsed,
+        re.IGNORECASE,
+    )
+    unlabeled = re.findall(r"\bRoom\s+(\d+[A-Za-z]*)\b", collapsed, re.IGNORECASE)
+    candidates = [f"Room {r.upper()}" for r in (labeled or unlabeled)]
+
+    room_str = ""
+    if expected_room:
+        expected_key = normalize_room_key(expected_room)
+        for candidate in candidates:
+            if rooms_match(candidate, expected_room):
+                room_str = candidate
+                break
+        if not room_str and expected_key and expected_key in re.sub(r"\s+", "", collapsed).upper():
+            room_str = parse_room_name_from_title(expected_room)
+    elif candidates:
+        room_str = candidates[0]
+
+    code_str = extract_checkin_code_from_email_text(flattened)
+    checkin_link = unwrap_checkin_link(extract_checkin_link_from_email_text(text or flattened))
+    return (room_str, code_str, checkin_link)
 
 
 def add_booking_to_calendar(
@@ -417,251 +584,229 @@ def add_booking_to_calendar(
     time_label: str = "12:00pm–2:00pm",
 ) -> bool:
     """
-    Create a Google Calendar event for the study room booking.
-    Requires credentials.json and one-time OAuth (token.json) in the project folder.
+    Create/update a Google Calendar event only when check-in code/link exist.
+    Placeholder events are not created — outlook_watcher adds the event after
+    the forwarded LibCal confirmation arrives in board Outlook.
     """
+    code = (checkin_code or "").strip()
+    link = unwrap_checkin_link(checkin_link or "")
+    if not code and not link:
+        print(
+            "Google Calendar skipped: no check-in code/link yet. "
+            "Wait for forwarded LibCal mail, then run scrape-outlook."
+        )
+        return False
+
     print("Attempting to add event to Google Calendar...")
     try:
-        from google.auth.transport.requests import Request
-        from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
-        from googleapiclient.discovery import build
-    except ImportError as e:
-        print("Google Calendar skipped: install optional packages: pip install google-auth-oauthlib google-auth-httplib2 google-api-python-client")
-        return False
-
-    SCOPES = ["https://www.googleapis.com/auth/calendar"]
-    creds = None
-    token_path = GOOGLE_TOKEN_FILE
-    creds_path = GOOGLE_CREDENTIALS_FILE
-
-    if not os.path.exists(creds_path):
-        print(f"Google Calendar skipped: credentials.json not found at {creds_path}")
+        from shared.google_auth import build_calendar_service, resolve_study_rooms_calendar_id
+    except ImportError:
+        print(
+            "Google Calendar skipped: install google-auth google-auth-oauthlib "
+            "google-api-python-client"
+        )
         return False
 
     try:
-        if os.path.exists(token_path):
-            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
-                creds = flow.run_local_server(port=0)
-            with open(token_path, "w") as f:
-                f.write(creds.to_json())
+        service = build_calendar_service(interactive=not RUN_HEADLESS)
 
-        service = build("calendar", "v3", credentials=creds)
-
-        calendar_id = None
-        page_token = None
-        while True:
-            calendar_list = service.calendarList().list(pageToken=page_token).execute()
-            for cal in calendar_list.get("items", []):
-                if cal.get("summary") == STUDY_ROOMS_CALENDAR_NAME:
-                    calendar_id = cal["id"]
-                    break
-            else:
-                page_token = calendar_list.get("nextPageToken")
-                if not page_token:
-                    break
-                continue
-            break
+        try:
+            calendar_id = resolve_study_rooms_calendar_id(service)
+        except Exception as exc:
+            print(f"Google Calendar skipped: cannot open study-rooms calendar ({exc})")
+            if STUDY_ROOMS_CALENDAR_ID:
+                print(f"  STUDY_ROOMS_CALENDAR_ID={STUDY_ROOMS_CALENDAR_ID}")
+            print(
+                "Share the calendar with the service account "
+                "(Make changes to events), or fix STUDY_ROOMS_CALENDAR_ID."
+            )
+            return False
 
         if not calendar_id:
             print(f"Google Calendar skipped: calendar '{STUDY_ROOMS_CALENDAR_NAME}' not found.")
+            print(
+                "Set STUDY_ROOMS_CALENDAR_ID in config/ucf_credentials.env "
+                "(needed for service accounts)."
+            )
             return False
 
-        service.calendars().patch(
-            calendarId=calendar_id,
-            body={
-                "summary": STUDY_ROOMS_CALENDAR_NAME,
-                "description": STUDY_ROOMS_CALENDAR_DESCRIPTION,
-            },
-        ).execute()
+        # Do not patch calendar metadata — that requires owner; SA is writer-only.
 
-        # UCF is in Eastern; let the timeZone field handle EST/EDT automatically
         start = f"{date_str}T{start_hhmm}:00"
         end = f"{date_str}T{end_hhmm}:00"
         summary = parse_room_name_from_title(room_name)
+        desc_parts = []
+        if code:
+            desc_parts.append(f"Check-in Code: {code}")
+        if link:
+            desc_parts.append(f"Check-in link: {link}")
         event = {
             "summary": summary,
             "start": {"dateTime": start, "timeZone": "America/New_York"},
             "end": {"dateTime": end, "timeZone": "America/New_York"},
+            "description": "\n".join(desc_parts),
         }
-        desc_parts = []
-        if checkin_code:
-            desc_parts.append(f"Check-in Code: {checkin_code}")
-        link = unwrap_checkin_link(checkin_link)
-        if link:
-            desc_parts.append(f"Check-in link: {link}")
-        if desc_parts:
-            event["description"] = "\n".join(desc_parts)
-        created = service.events().insert(calendarId=calendar_id, body=event).execute()
-        print(f"Google Calendar event created: {created.get('htmlLink', created.get('id', 'ok'))}")
+
+        existing = (
+            service.events()
+            .list(
+                calendarId=calendar_id,
+                timeMin=f"{date_str}T00:00:00-04:00",
+                timeMax=f"{date_str}T23:59:59-04:00",
+                singleEvents=True,
+            )
+            .execute()
+            .get("items", [])
+        )
+        match = next(
+            (
+                item
+                for item in existing
+                if item.get("summary") == summary
+                and (item.get("start") or {})
+                .get("dateTime", "")
+                .startswith(f"{date_str}T{start_hhmm}")
+            ),
+            None,
+        )
+        if match:
+            created = (
+                service.events()
+                .patch(calendarId=calendar_id, eventId=match["id"], body=event)
+                .execute()
+            )
+            print(
+                f"Google Calendar event updated: {summary} ({time_label}) — "
+                f"{created.get('htmlLink', created.get('id', 'ok'))}"
+            )
+        else:
+            created = service.events().insert(calendarId=calendar_id, body=event).execute()
+            print(
+                f"Google Calendar event created: {summary} ({time_label}) — "
+                f"{created.get('htmlLink', created.get('id', 'ok'))}"
+            )
         return True
     except Exception as e:
         print(f"Google Calendar error: {e}")
         return False
 
 
-def send_booking_email(room_name: str, date_str: str) -> bool:
-    """Send a booking reminder to BOOKING_EMAIL. Set GMAIL_APP_PASSWORD (and optionally GMAIL_FROM) in env."""
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.mime.multipart import MIMEMultipart
-
-    password = os.environ.get("GMAIL_APP_PASSWORD")
-    if not password:
-        return False
-    from_addr = os.environ.get("GMAIL_FROM", BOOKING_EMAIL)
-
-    msg = MIMEMultipart()
-    msg["Subject"] = f"Study room booked: {room_name} – {date_str} 12:00–2:00pm"
-    msg["From"] = from_addr
-    msg["To"] = BOOKING_EMAIL
-    body = f"You have a study room booking:\n\nRoom: {room_name}\nDate: {date_str}\nTime: 12:00pm – 2:00pm\n\n(UCF LibCal)"
-    msg.attach(MIMEText(body, "plain"))
-
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
-            s.login(from_addr, password)
-            s.sendmail(from_addr, BOOKING_EMAIL, msg.as_string())
-        return True
-    except Exception:
-        return False
-
-
 def get_checkin_code_from_page(page) -> str:
-    """
-    Try to scrape the check-in code from the LibCal confirmation page.
-    Returns the code string or "" if not found.
-    """
+    """Try to scrape the check-in code from the LibCal confirmation page."""
+    _, code, _ = get_confirmation_from_libcal_page(page)
+    return code
+
+
+def _read_visible_page_text(page) -> str:
+    try:
+        return page.locator("body").inner_text()
+    except Exception:
+        try:
+            return page.content()
+        except Exception:
+            return ""
+
+
+def get_confirmation_from_libcal_page(page, expected_room: str = "") -> tuple[str, str, str]:
+    """Parse room, check-in code, and link from the LibCal confirmation page."""
     try:
         time.sleep(1)
-        # Prefer visible text so we match what the user sees
-        try:
-            text = page.locator("body").inner_text()
-        except Exception:
-            text = page.content()
-        # Patterns: "check-in code: XXXXX", "Your code is ABC12", "Code: 12345"
-        m = re.search(r"(?:check[- ]?in\s+code|confirmation\s+code|your\s+code)[:\s]+([A-Za-z0-9]{4,12})", text, re.IGNORECASE)
-        if m:
-            return m.group(1).strip()
-        m = re.search(r"\bcode[:\s]+([A-Za-z0-9]{4,12})\b", text, re.IGNORECASE)
-        if m:
-            return m.group(1).strip()
-        # Look for a standalone code in a likely element
-        for sel in ["[class*='checkin']", "[class*='confirmation-code']", "[class*='booking-code']", "[class*='code']"]:
-            try:
-                for el in page.locator(sel).all():
-                    if el.is_visible():
-                        t = el.inner_text()
-                        if t and re.match(r"^[A-Za-z0-9]{4,12}$", t.strip()):
-                            return t.strip()
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return ""
-
-
-def get_room_and_code_from_outlook(page, account) -> tuple[str, str, str]:
-    """
-    Open Outlook in the same browser (same cookies/session) and get room number,
-    check-in code, and check-in link from the most recent LibCal confirmation email.
-    Returns (room_str, code_str, checkin_link), e.g. ("Room 174", "4B4", "https://..."), or ("", "", "") if not found.
-    Email body/ICS text looks like:
-      Booking: Room 174
-      ...
-      Enter this code: 4B4
-    """
-    room_str = ""
-    code_str = ""
-    checkin_link = ""
-    try:
-        # Open Outlook inbox (same browser = same UCF/Outlook session)
-        page.goto(OUTLOOK_INBOX_URL, wait_until="commit", timeout=30000)
-        try:
-            page.wait_for_load_state("domcontentloaded", timeout=10000)
-        except Exception:
-            pass
-        time.sleep(4)
-
-        # If we hit a login page, we can't proceed
-        if "login" in page.url.lower() or "signin" in page.url.lower():
-            print(f"Outlook: not signed in in this browser; open Outlook and sign in as {account.id} ({account.masked_outlook}) for future runs.")
-            return ("", "", "")
-
-        # Search for emails from LibCal with subject "Your booking has been submitted" (newest first)
-        try:
-            search = page.locator('input[aria-label*="Search"], input[placeholder*="Search"], [aria-label*="Search"]').first
-            search.wait_for(state="visible", timeout=8000)
-            search.fill(
-                f'from:{LIBCAL_SENDER} subject:"{LIBCAL_CONFIRMATION_SUBJECT}" to:{account.ucf_email}'
-            )
-            search.press("Enter")
-            time.sleep(5)  # let search results fully load so first = most recent
-        except Exception:
-            pass
-
-        # Open the single most recent message: first result in the list (Outlook shows newest first)
-        try:
-            # First message in results = most recent; wait for list to have items
-            msg_list = page.locator('[role="listbox"] [role="option"], [data-convid], .ms-ListItem')
-            msg_list.first.wait_for(state="visible", timeout=10000)
-            time.sleep(1)
-            msg_list.first.click()
-            time.sleep(3)
-        except Exception:
-            try:
-                page.locator(f'text="{LIBCAL_SENDER}"').first.click()
-                time.sleep(3)
-            except Exception:
-                try:
-                    page.locator('text="Booking"').first.click()
-                    time.sleep(3)
-                except Exception:
-                    print(f"Outlook: could not open an email with subject '{LIBCAL_CONFIRMATION_SUBJECT}'.")
-                    return ("", "", "")
-
-        # Get the message body text (same text as in ICS)
-        try:
-            body = page.locator('[aria-label="Message body"], [role="document"], .readingPaneContainer, .Xb2Vxb').first
-            body.wait_for(state="visible", timeout=6000)
-            text = body.inner_text()
-            for link in body.locator('a[href*="libcal"], a[href*="safelinks"]').all():
-                href = (link.get_attribute("href") or "").strip()
-                if href and ("libcal" in href.lower() or "safelinks" in href.lower()):
-                    checkin_link = unwrap_checkin_link(href)
-                    break
-        except Exception:
-            text = page.locator("body").inner_text()
-
+        text = _read_visible_page_text(page)
+        room_str, code_str, checkin_link = parse_booking_confirmation(
+            text, expected_room=expected_room
+        )
         if not checkin_link:
-            checkin_link = unwrap_checkin_link(extract_checkin_link_from_email_text(text))
-
-        # Parse room line, e.g. "Space: Room 360H" or "Booking: Room 174"
-        m_room = re.search(r"(?:Booking|Space):\s*Room\s+(\d+[A-Za-z]*)", text, re.IGNORECASE)
-        if m_room:
-            room_str = f"Room {m_room.group(1).upper()}"
-
-        # Parse check-in code: "Enter the code 4B4 to check in." or "code 4B4"
-        m_code = re.search(r"Enter the code\s+([A-Za-z0-9]+)", text, re.IGNORECASE)
-        if not m_code:
-            m_code = re.search(r"(?:check[- ]?in with |enter )?(?:the )?code\s+([A-Za-z0-9]{3,8})\b", text, re.IGNORECASE)
-        if m_code:
-            code_str = m_code.group(1).strip()
-
+            try:
+                for link in page.locator('a[href*="libcal"], a[href*="checkin"], a[href*="safelinks"]').all():
+                    href = (link.get_attribute("href") or "").strip()
+                    if href:
+                        checkin_link = unwrap_checkin_link(href)
+                        if checkin_link:
+                            break
+            except Exception:
+                pass
         if room_str or code_str or checkin_link:
             print(
-                "Outlook: from latest LibCal email -> "
+                "LibCal confirmation page -> "
                 f"room={room_str or '?'}, code={code_str or '?'}, link={checkin_link or '?'}"
             )
+        return (room_str, code_str, checkin_link)
     except Exception as e:
-        print(f"Outlook: could not get room/code from email: {e}")
+        print(f"LibCal confirmation page: could not parse details: {e}")
+        return ("", "", "")
 
-    return (room_str, code_str, checkin_link)
+
+def _read_outlook_message_body(page) -> tuple[str, str]:
+    """Return (body_text, checkin_link) from the currently open Outlook message."""
+    checkin_link = ""
+    chunks: list[str] = []
+
+    def collect_from(locator) -> None:
+        nonlocal checkin_link
+        try:
+            locator.wait_for(state="visible", timeout=4000)
+        except Exception:
+            return
+        try:
+            chunks.append(locator.inner_text())
+        except Exception:
+            pass
+        try:
+            chunks.append(locator.inner_html())
+        except Exception:
+            pass
+        try:
+            for link in locator.locator(
+                'a[href*="libcal"], a[href*="safelinks"], a:has-text("check in")'
+            ).all():
+                href = (link.get_attribute("href") or "").strip()
+                if not href:
+                    continue
+                unwrapped = unwrap_checkin_link(href)
+                if is_valid_checkin_link(unwrapped):
+                    checkin_link = unwrapped
+                    # Prefer an explicit check-in URL when present.
+                    if "checkin" in unwrapped.lower() or "check-in" in unwrapped.lower():
+                        break
+        except Exception:
+            pass
+
+    try:
+        page.get_by_text("Enter the code", exact=False).first.wait_for(timeout=8000)
+    except Exception:
+        try:
+            page.get_by_text("Space:", exact=False).first.wait_for(timeout=4000)
+        except Exception:
+            pass
+
+    for selector in (
+        '[aria-label="Message body"]',
+        '[role="document"]',
+        ".readingPaneContainer",
+        ".Xb2Vxb",
+        '[aria-label*="Message"]',
+    ):
+        collect_from(page.locator(selector).first)
+
+    for frame in page.frames:
+        if frame == page.main_frame:
+            continue
+        try:
+            collect_from(frame.locator("body"))
+        except Exception:
+            continue
+
+    if not chunks:
+        try:
+            chunks.append(page.locator("body").inner_text())
+            chunks.append(page.locator("body").inner_html())
+        except Exception:
+            pass
+
+    text = "\n".join(c for c in chunks if c)
+    if not checkin_link:
+        checkin_link = unwrap_checkin_link(extract_checkin_link_from_email_text(text))
+    return text, checkin_link
 
 
 def notify_booking(
@@ -673,8 +818,15 @@ def notify_booking(
     end_hhmm: str = "14:00",
     time_label: str = "12:00pm–2:00pm",
 ) -> None:
-    """Try to add a Google Calendar event, then fallback to email to BOOKING_EMAIL."""
-    print("Sending reminder (Google Calendar or email)...")
+    """Add Google Calendar only when check-in code/link is known (from email)."""
+    if not (checkin_code or "").strip() and not (checkin_link or "").strip():
+        print(
+            f"Booked {parse_room_name_from_title(room_name)} on {date_str} {time_label}. "
+            f"Calendar waits for check-in code via forwarded LibCal mail → "
+            f"{BOOKING_EMAIL or 'board Outlook'} (scrape-outlook)."
+        )
+        return
+    print("Sending reminder (Google Calendar)...")
     if add_booking_to_calendar(
         room_name,
         date_str,
@@ -684,17 +836,12 @@ def notify_booking(
         end_hhmm=end_hhmm,
         time_label=time_label,
     ):
-        print(f"Added event to Google Calendar: {room_name} on {date_str} {time_label}. Check your calendar/reminders.")
-    elif send_booking_email(room_name, date_str):
-        print(f"Sent booking reminder to {mask_email(BOOKING_EMAIL)}.")
+        print(
+            f"Added event to Google Calendar: {parse_room_name_from_title(room_name)} "
+            f"on {date_str} {time_label}."
+        )
     else:
-        print(f"Booking reminder: {room_name} on {date_str} {time_label}.")
-        print("")
-        print(">>> No reminder was sent. To get Google Calendar sign-in and events:")
-        print(">>> 1. Install: pip install google-auth-oauthlib google-auth-httplib2 google-api-python-client")
-        print(">>> 2. Put credentials.json in this folder (you already have it).")
-        print(">>> 3. Run the script again; a browser will open once for you to sign in with Google.")
-        print("")
+        print(f"Could not add calendar event for {room_name} on {date_str} {time_label}.")
 
 
 def compute_target_date_and_window():
@@ -762,14 +909,71 @@ def is_outlook_ready(page) -> bool:
     url = page.url.lower()
     if "login.microsoftonline.com" in url or "login.live.com" in url:
         return False
+    if "login.microsoft.com" in url:
+        return False
     if is_login_page(page) and "outlook" not in url:
         return False
-    if "outlook.office.com" not in url and "outlook.live.com" not in url:
+    outlook_hosts = (
+        "outlook.office.com",
+        "outlook.live.com",
+        "outlook.cloud.microsoft",
+        "outlook.office365.com",
+    )
+    if not any(h in url for h in outlook_hosts):
         return False
     if "signin" in url or "/login" in url:
         return False
-    if "/mail" in url or "/owa/" in url or "outlook.office.com" in url:
-        return True
+
+    # Passkey / Windows Hello / conditional access interstitial — not inbox yet.
+    try:
+        body = (page.inner_text("body", timeout=2000) or "").lower()
+    except Exception:
+        body = ""
+    mfa_markers = (
+        "face, fingerprint, pin or security key",
+        "security window",
+        "approve sign in",
+        "approve the request",
+        "enter code",
+        "more information required",
+        "verify your identity",
+        "stay signed in",
+        "sign in another way",
+    )
+    if any(m in body for m in mfa_markers):
+        # "Stay signed in?" can appear after MFA — only block hard challenges.
+        hard = (
+            "face, fingerprint, pin or security key",
+            "security window",
+            "approve sign in",
+            "approve the request",
+            "more information required",
+            "verify your identity",
+            "sign in another way",
+        )
+        if any(m in body for m in hard):
+            return False
+
+    # Prefer evidence of the mail UI, not just an /mail URL.
+    try:
+        for sel in (
+            '[role="listbox"]',
+            '[data-convid]',
+            '#topSearchInput',
+            'input[aria-label*="Search"]',
+            'div[aria-label*="Message list"]',
+            'div[aria-label*="Folder pane"]',
+            '[role="treeitem"]',
+        ):
+            loc = page.locator(sel).first
+            if loc.count() and loc.is_visible():
+                return True
+    except Exception:
+        pass
+
+    if "/mail" in url or "/owa/" in url:
+        # URL looks right but no mail chrome yet — treat as not ready.
+        return False
     return False
 
 
@@ -827,12 +1031,15 @@ def ensure_logged_in(page, account, redirect_after_login=True, interactive: bool
     print(f"Detected login page: {page.url} (account: {account.id})")
 
     if not (account.ucf_email and account.ucf_password):
-        if interactive:
-            print("Set UCF_EMAIL and UCF_PASSWORD for this account.")
-            print("Log in manually in the browser, then press Enter here to continue...")
+        if interactive and not RUN_HEADLESS:
+            print("No password on file — complete sign-in in the browser (session-only mode).")
+            print("Log in manually, then press Enter here to continue...")
             wait_for_user()
-        elif not wait_for_login_complete(page):
-            print("Login timed out — finish sign-in and run ./sign-in.sh again.")
+        elif not wait_for_login_complete(page, timeout_seconds=30):
+            print(
+                f"Saved session expired for {account.id}. "
+                f"Run ./sign-in.sh {account.id} (no password stored — browser MFA only)."
+            )
             return
         if redirect_after_login:
             page.goto(BASE_URL, wait_until="networkidle")
@@ -1117,17 +1324,17 @@ def try_book_window(
     matching = [
         a for a in matching
         if is_capacity_10_room(a.get("room") or "")
+        or (required_room and rooms_match(a.get("room") or "", required_room))
     ]
-
-    if not matching:
-        print(f"No capacity-10 rooms available at {title_frag}.")
-        return None, None
 
     if required_room:
         matching = [a for a in matching if rooms_match(a.get("room") or "", required_room)]
         if not matching:
             print(f"{required_room} is not available for {time_label}.")
             return None, None
+    elif not matching:
+        print(f"No capacity-10 rooms available at {title_frag}.")
+        return None, None
 
     candidates = sorted(
         matching,
@@ -1347,32 +1554,30 @@ def book_one_window(
     target_date: str,
     window: tuple,
     required_room: str | None = None,
+    page=None,
+    keep_session_open: bool = False,
 ) -> tuple[bool, str]:
     """
     Book one time window on target_date using the given account.
     Returns (success, room_name).
+
+    If page is provided, uses the existing browser session (grid must already be loaded).
     """
     title_frag, start_hhmm, end_hhmm, time_label = window
     profile_dir = account.profile_dir()
     os.makedirs(profile_dir, exist_ok=True)
 
+    owns_browser = page is None
     booked_room = ""
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=profile_dir,
-            headless=RUN_HEADLESS,
-            args=["--start-maximized"] if not RUN_HEADLESS else [],
-        )
-        page = context.new_page()
 
-        page.goto(BASE_URL, wait_until="networkidle")
-        ensure_logged_in(page, account)
-        advance_days(page, DAYS_AHEAD)
-        page.wait_for_load_state("networkidle")
-        time.sleep(1.5)
+    def run_booking(target_page) -> tuple[bool, str]:
+        nonlocal booked_room
+        if not wait_for_site_ready(target_page, is_libcal_ready, 30, label="LibCal"):
+            print("LibCal grid not ready for booking.")
+            return False, ""
 
         room, _ = try_book_window(
-            page,
+            target_page,
             title_frag,
             end_hhmm,
             time_label,
@@ -1380,30 +1585,35 @@ def book_one_window(
         )
         if not room:
             print(f"No large study room available for {time_label}.")
-            context.close()
             return False, ""
 
         booked_room = room
-        if not submit_booking_on_page(page, account):
-            wait_for_user("Press Enter to close...")
-            context.close()
+        if not submit_booking_on_page(target_page, account):
+            if not keep_session_open:
+                wait_for_user("Press Enter to close...")
             return False, booked_room
 
-        room_for_calendar = booked_room
+        _, page_code, page_link = get_confirmation_from_libcal_page(
+            target_page, expected_room=booked_room
+        )
+        # Calendar events only after check-in details from forwarded LibCal email
+        # (outlook_watcher). Do not publish placeholders or page-scraped codes.
         checkin_code = ""
         checkin_link = ""
-        print(f"Waiting {OUTLOOK_WAIT_SECONDS} seconds for confirmation email, then opening Outlook...")
-        time.sleep(OUTLOOK_WAIT_SECONDS)
-        room_from_email, code_from_email, link_from_email = get_room_and_code_from_outlook(page, account)
-        if room_from_email:
-            room_for_calendar = room_from_email
-        if code_from_email:
-            checkin_code = code_from_email
-        if link_from_email:
-            checkin_link = link_from_email
+        if page_code or page_link:
+            print(
+                f"LibCal page had code={page_code or '?'} (not written to calendar; "
+                f"waiting for forward → {BOOKING_EMAIL or 'board Outlook'})."
+            )
+        print(
+            "Check-in codes come from forwarded LibCal mail → "
+            f"{BOOKING_EMAIL or 'board Outlook'} (./scrape-outlook.sh)."
+        )
 
+        calendar_title = parse_room_name_from_title(booked_room)
+        print(f"Calendar title for {time_label}: {calendar_title}")
         notify_booking(
-            room_for_calendar,
+            calendar_title,
             target_date,
             checkin_code,
             checkin_link=checkin_link,
@@ -1412,12 +1622,25 @@ def book_one_window(
             time_label=time_label,
         )
 
-        close_secs = 15 if PIPELINE_TEST else CLOSE_AFTER_SECONDS
-        print(f"Booked {booked_room} for {time_label}. Closing in {close_secs}s...")
-        time.sleep(close_secs)
-        context.close()
+        if keep_session_open:
+            print(f"Booked {booked_room} for {time_label}.")
+        else:
+            close_secs = 15 if PIPELINE_TEST else CLOSE_AFTER_SECONDS
+            print(f"Booked {booked_room} for {time_label}. Closing in {close_secs}s...")
+            time.sleep(close_secs)
 
-    return True, booked_room
+        return True, booked_room
+
+    if owns_browser:
+        from browser_session import open_account_context
+
+        with open_account_context(account) as (_p, _browser, context):
+            target_page = context.new_page()
+            if not prepare_libcal_grid(target_page, account):
+                return False, ""
+            return run_booking(target_page)
+
+    return run_booking(page)
 
 
 def book_room():
@@ -1456,6 +1679,8 @@ def book_room():
 
     print(f"Booking {target_room} for: {', '.join(w[3] for w in windows_to_book)}")
 
+    from browser_session import open_account_context
+
     booked_count = 0
     for title_frag, start_hhmm, end_hhmm, time_label in windows_to_book:
         hours = booking_hours_from_window(start_hhmm, end_hhmm)
@@ -1471,21 +1696,48 @@ def book_room():
             continue
 
         print(f"\n=== {target_room} {time_label} — account: {account.id} ===")
-        ok, room = book_one_window(
-            account,
-            target_date,
-            (title_frag, start_hhmm, end_hhmm, time_label),
-            required_room=target_room,
-        )
-        if ok:
-            record_booking(account, target_date, hours)
-            used_account_ids.add(account.id)
-            booked_count += 1
-            print(f"Recorded {hours:g}h for {account.id} on {target_date}.")
-        else:
-            print(f"Failed to book {time_label} on {target_room}.")
+        with open_account_context(account) as (_p, _browser, context):
+            page = context.new_page()
+            if not prepare_libcal_grid(page, account):
+                print(f"Could not load LibCal for {account.id}.")
+                continue
 
-    print(f"\nDone. {booked_count}/{len(windows_to_book)} window(s) booked for {target_date} in {target_room}.")
+            book_title, book_start, book_end, book_label = (
+                title_frag,
+                start_hhmm,
+                end_hhmm,
+                time_label,
+            )
+            book_room_name = target_room
+            if not room_supports_window(page, target_room, title_frag, end_hhmm):
+                print(f"{target_room} no longer available for {time_label} — re-scanning...")
+                found_room, rescanned = discover_target_room(page, windows)
+                match = next((w for w in rescanned if w[3] == time_label), None)
+                if not found_room or not match:
+                    print(f"No room available for {time_label} on the current grid.")
+                    continue
+                book_room_name = found_room
+                book_title, book_start, book_end, book_label = match
+
+            ok, room = book_one_window(
+                account,
+                target_date,
+                (book_title, book_start, book_end, book_label),
+                required_room=book_room_name,
+                page=page,
+                keep_session_open=False,
+            )
+            if ok:
+                record_booking(account, target_date, hours)
+                used_account_ids.add(account.id)
+                booked_count += 1
+                print(f"Recorded {hours:g}h for {account.id} on {target_date}.")
+            else:
+                print(f"Failed to book {book_label} on {book_room_name}.")
+
+    print(
+        f"\nDone. {booked_count}/{len(windows_to_book)} window(s) booked for {target_date} in {target_room}."
+    )
     if booked_count < len(windows) and len(accounts) < 3:
         print(f"Note: full 12pm–10pm coverage needs 3 accounts (you have {len(accounts)}).")
 
@@ -1507,10 +1759,23 @@ def _headless_test():
         context.close()
     print("Done.")
 
+
 if __name__ == "__main__":
+    from shared.alerts import report_job
+
     if RUN_HEADLESS_TEST:
-        _headless_test()
+        try:
+            _headless_test()
+            report_job("book", ok=True, detail="headless test ok")
+        except Exception as exc:
+            report_job("book", ok=False, error=str(exc))
+            raise
     else:
-        book_room()
+        try:
+            book_room()
+            report_job("book", ok=True, detail="booking run finished")
+        except Exception as exc:
+            report_job("book", ok=False, error=str(exc))
+            raise
 
 

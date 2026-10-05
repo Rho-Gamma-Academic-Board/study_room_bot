@@ -101,9 +101,9 @@ chmod +x ./*.sh scripts/*.sh 2>/dev/null || true
 cat <<'EOF'
 
 Setup complete. Next steps:
-  ./start.sh                              # interactive menu
-  ./onboard.sh                            # guided wizard
-  ./import-google-credentials.sh          # paste Google OAuth JSON
-  ./add-account.sh                        # browser sign-in (iMessage 2FA)
+  ./scripts/install-intake-launchd.sh      # API on :8790
+  ./onboard.sh                            # guided wizard (SA + Outlook + schedule)
+  # Chapter site: STUDY_ROOM_INTAKE_URL=http://127.0.0.1:8790 → /academic/study-rooms
   ./install-launchd.sh                    # schedule auto-booking
+  ./scripts/install-outlook-scrape-launchd.sh
 EOF

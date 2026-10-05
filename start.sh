@@ -7,8 +7,6 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-RUN_BOT="$ROOT/run-bot.sh"
-
 # shellcheck source=scripts/launchd.sh
 source "$ROOT/scripts/launchd.sh"
 
@@ -126,12 +124,11 @@ account_count() {
     echo 0
     return
   fi
-  find "$ROOT/data/accounts" -maxdepth 1 -name '*.env' ! -name 'example.env' 2>/dev/null | wc -l | tr -d ' '
+  find "$ROOT/data/accounts" -maxdepth 1 -name '*.env' ! -name 'example.env' ! -name '*.example' 2>/dev/null | wc -l | tr -d ' '
 }
 
 onboarding_needed() {
-  [[ ! -f "$ROOT/config/credentials.json" ]] \
-    || [[ ! -f "$ROOT/config/token.json" ]] \
+  [[ ! -f "$ROOT/config/service-account.json" ]] \
     || [[ "$(account_count)" -lt 1 ]] \
     || ! launchd_installed
 }
@@ -197,7 +194,7 @@ list_accounts() {
   ids="$(
     {
       if [[ -d "$ROOT/data/accounts" ]]; then
-        find "$ROOT/data/accounts" -maxdepth 1 -name '*.env' ! -name 'example.env' -exec basename {} .env \; 2>/dev/null
+        find "$ROOT/data/accounts" -maxdepth 1 -name '*.env' ! -name 'example.env' ! -name '*.example' -exec basename {} .env \; 2>/dev/null
       fi
       if [[ -d "$ROOT/data/profiles" ]]; then
         find "$ROOT/data/profiles" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null
@@ -224,17 +221,18 @@ show_status() {
     status_warn "Dependencies missing — run ./setup.sh"
   fi
 
-  if [[ -f "$ROOT/config/credentials.json" ]]; then
-    status_ok "Google OAuth credentials found"
+  if [[ -f "$ROOT/config/service-account.json" ]]; then
+    status_ok "Google Calendar service account found"
   else
-    status_warn "Missing config/credentials.json"
-    say " ${DIM}→ Use menu ${GOLD}[ 7 ]${DIM} to paste Google OAuth JSON${RESET}"
+    status_warn "Missing config/service-account.json"
+    say " ${DIM}→ Place SA JSON, share calendar, set STUDY_ROOMS_CALENDAR_ID${RESET}"
   fi
 
-  if [[ -f "$ROOT/config/token.json" ]]; then
-    status_ok "Google Calendar signed in"
+  if [[ -f "$ROOT/config/ucf_credentials.env" ]] \
+    && grep -q '^STUDY_ROOMS_CALENDAR_ID=.' "$ROOT/config/ucf_credentials.env" 2>/dev/null; then
+    status_ok "STUDY_ROOMS_CALENDAR_ID set"
   else
-    status_warn "Google Calendar not signed in"
+    status_warn "STUDY_ROOMS_CALENDAR_ID not set in ucf_credentials.env"
   fi
 
   list_accounts
@@ -269,14 +267,14 @@ show_menu() {
   printf '\n'
 
   menu_item "1" "SHOW STATUS" "accounts, schedule, auth"
-  menu_item "2" "ADD ACCOUNT" "new UCF login + browser sign-in"
-  menu_item "3" "REMOVE ACCOUNT" "delete credentials + profile"
+  menu_item "2" "IMPORT COOKIES" "LibCal storageState JSON (or use intake site)"
+  menu_item "3" "REMOVE ACCOUNT" "delete account + cookies"
   menu_item "4" "INSTALL SCHEDULE" "LaunchAgent morning window"
   menu_item "5" "UNINSTALL SCHEDULE" "remove LaunchAgent"
-  menu_item "6" "RUN BOT NOW" "test run (any day, live output)"
-  menu_item "7" "GOOGLE CALENDAR" "OAuth sign-in"
-  menu_item "8" "RE-SIGN IN UCF" "refresh browser session"
-  menu_item "9" "SETUP WIZARD" "first-time: calendar, accounts, schedule"
+  menu_item "6" "RUN BOT NOW" "book rooms (live output)"
+  menu_item "7" "GOOGLE CALENDAR" "verify service account access"
+  menu_item "8" "SCRAPE OUTLOOK" "board Inbox → calendar check-in codes"
+  menu_item "9" "INTAKE API" "start API on :8790 (UI is chapter site)"
   say "  ${RED}┃${RESET}"
   menu_item "0" "EXIT" ""
 
@@ -293,7 +291,7 @@ run_choice() {
       show_status
       ;;
     2)
-      "$ROOT/add-account.sh" || true
+      "$ROOT/import-cookies.sh" || true
       ;;
     3)
       "$ROOT/remove-account.sh" || true
@@ -305,41 +303,24 @@ run_choice() {
       "$ROOT/uninstall-launchd.sh" || true
       ;;
     6)
-      "$ROOT/run-bot-now.sh" || true
+      "$ROOT/run-bot.sh" --now || true
       ;;
     7)
       if ! is_setup_done; then
         status_warn "Dependencies missing — run ./setup.sh"
-      elif [[ ! -f "$ROOT/config/credentials.json" ]]; then
-        status_warn "Missing config/credentials.json"
-        say " ${DIM}→ Paste your Google OAuth JSON now${RESET}"
-        "$ROOT/import-google-credentials.sh" || true
       else
-        printf "%b" "${PAD} ${GOLD}[1]${RESET} Sign in to Google Calendar  ${GOLD}[2]${RESET} Replace credentials.json  ${GOLD}[0]${RESET} Back: "
-        read -r gchoice
-        case "$gchoice" in
-          2)
-            "$ROOT/import-google-credentials.sh" || true
-            ;;
-          1|"")
-            "$ROOT/venv/bin/python3" "$ROOT/bot/auth_google_calendar.py" || true
-            ;;
-        esac
+        "$ROOT/venv/bin/python3" "$ROOT/bot/auth_google_calendar.py" || true
       fi
       ;;
     8)
       if ! is_setup_done; then
         status_warn "Dependencies missing — run ./setup.sh"
       else
-        printf "%b" "${PAD} ${GOLD}Account id to sign in:${RESET} "
-        read -r account_id
-        if [[ -n "$account_id" ]]; then
-          "$ROOT/sign-in.sh" "$account_id" || true
-        fi
+        "$ROOT/scrape-outlook.sh" --once || true
       fi
       ;;
     9)
-      "$ROOT/onboard.sh" || true
+      "$ROOT/start-intake.sh" || true
       ;;
     0|q|Q)
       printf '\n'
