@@ -109,7 +109,7 @@ Scheduled `./run-bot.sh` runs headless and relies on **saved cookies**. Re-run `
 
 ## How booking works
 
-1. **Discover** — prefer one cap-10 room for full 12pm–10pm (360H/360F first); if only part of the day is open, fill remaining windows on other large rooms
+1. **Discover** — prefer one cap-10 room for full 12pm–10pm (360H/360F first); if only part of the day is open, fill remaining windows on other large rooms. End times shorten to LibCal’s library-hours dropdown when the ideal block isn’t offered (e.g. Friday 4pm→7pm instead of 4–8).
 2. **Book** — each planned window, rotating accounts
 3. **Calendar** — events on your shared study rooms calendar
 
