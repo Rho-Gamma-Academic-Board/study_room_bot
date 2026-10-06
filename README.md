@@ -7,7 +7,7 @@ Designed for an **always-on Mac mini** using **launchd** for scheduling.
 - Runs on a **randomized morning window** Fri–Tue via LaunchAgent (books **Mon–Fri** rooms, 3 days ahead)
 - Skips **Saturday and Sunday** study room dates
 - Books **3 days ahead**
-- Targets **12:00pm–10:00pm** on one **capacity-10** room (360H → 360F → other cap-10)
+- Targets **12:00pm–10:00pm** on **capacity-10** rooms (360H → 360F → other cap-10), falling back across rooms when one room cannot cover the full day
 - Uses a **different account** per time block (12–4, 4–8, 8–10)
 - **iMessage 2FA** — reads UCF SMS codes automatically during sign-in
 
@@ -109,8 +109,8 @@ Scheduled `./run-bot.sh` runs headless and relies on **saved cookies**. Re-run `
 
 ## How booking works
 
-1. **Discover** — find a cap-10 room with full (or best) 12pm–10pm availability (360H first)
-2. **Book** — three slots on that room, rotating accounts
+1. **Discover** — prefer one cap-10 room for full 12pm–10pm (360H/360F first); if only part of the day is open, fill remaining windows on other large rooms. End times shorten to LibCal’s library-hours dropdown when the ideal block isn’t offered (e.g. Friday 4pm→7pm instead of 4–8).
+2. **Book** — each planned window, rotating accounts
 3. **Calendar** — events on your shared study rooms calendar
 
 **3 accounts** needed for full 12pm–10pm coverage per day.

@@ -45,16 +45,21 @@ BASE_URL = LIBCAL_RESERVE_URL
 PREFERRED_ROOMS = ["360H", "360F"]
 # Large study rooms with capacity 10 on LibCal (360H/360F tried first via PREFERRED_ROOMS).
 CAPACITY_10_ROOMS = ["360H", "360F", "370A", "370B", "381", "172"]
+# Ideal coverage targets; actual end times are capped by LibCal's end dropdown (library hours).
 # Use private Chrome (no saved profile) for testing; set False for normal runs with saved login
 USE_PRIVATE_CHROME = False
-# (title fragment, start HH:MM 24h, end HH:MM 24h, human label)
+# (title fragment, start HH:MM 24h, ideal end HH:MM 24h, human label)
 # Full-day coverage: 12pm–10pm in three blocks (4h + 4h + 2h = 10h, one account per block).
+# When library closes earlier (e.g. Friday ~7pm), afternoon blocks shorten to the latest
+# selectable end and later blocks that have no start slot are skipped.
 FULL_DAY_WINDOWS = [
     ("12:00pm", "12:00", "16:00", "12:00pm–4:00pm"),
     ("4:00pm", "16:00", "20:00", "4:00pm–8:00pm"),
     ("8:00pm", "20:00", "22:00", "8:00pm–10:00pm"),
 ]
 DEFAULT_BOOKING_WINDOW = FULL_DAY_WINDOWS[0]
+# Shortest booking we'll accept when library hours truncate an ideal window.
+MIN_BOOKING_HOURS = 1.0
 PIPELINE_TEST_WINDOWS = [
     ("9:00am", "09:00", "11:00", "9:00am–11:00am"),
     ("10:00am", "10:00", "12:00", "10:00am–12:00pm"),
@@ -139,10 +144,81 @@ def cap10_rooms_on_grid(page) -> list[str]:
     return sorted(rooms, key=lambda r: (room_preference_rank(r), r))
 
 
-def room_supports_window(page, room_name: str, title_frag: str, end_hhmm: str) -> bool:
-    """Return True if room can be booked for start title_frag through end_hhmm."""
+def hhmm_to_minutes(hhmm: str) -> int:
+    hours, minutes = map(int, hhmm.split(":"))
+    return hours * 60 + minutes
+
+
+def format_clock_label(hhmm: str) -> str:
+    """16:00 -> 4:00pm, 12:00 -> 12:00pm."""
+    hours, minutes = map(int, hhmm.split(":"))
+    suffix = "am" if hours < 12 else "pm"
+    hour12 = hours % 12 or 12
+    return f"{hour12}:{minutes:02d}{suffix}"
+
+
+def format_window_label(start_hhmm: str, end_hhmm: str) -> str:
+    return f"{format_clock_label(start_hhmm)}–{format_clock_label(end_hhmm)}"
+
+
+def parse_end_option_hhmm(value: str) -> str | None:
+    """Extract HH:MM from a LibCal end option value like '2026-10-09 19:00:00'."""
+    if not value:
+        return None
+    match = re.search(r"(\d{2}):(\d{2})(?::\d{2})?", value)
+    if not match:
+        return None
+    return f"{match.group(1)}:{match.group(2)}"
+
+
+def list_end_option_hhmm(page) -> list[str]:
+    """Read selectable end times from LibCal (already capped to library hours)."""
+    try:
+        values = page.locator("select.b-end-date").evaluate(
+            "sel => [...sel.options].map(o => o.value || '')"
+        )
+    except Exception:
+        return []
+    ends: list[str] = []
+    for value in values or []:
+        hhmm = parse_end_option_hhmm(value)
+        if hhmm and hhmm not in ends:
+            ends.append(hhmm)
+    return ends
+
+
+def pick_end_within_library_hours(
+    available_ends: list[str],
+    start_hhmm: str,
+    ideal_end_hhmm: str,
+    min_hours: float = MIN_BOOKING_HOURS,
+) -> str | None:
+    """
+    Choose the longest bookable end at or before the ideal end.
+
+    LibCal's dropdown only lists ends allowed by remaining availability and
+    library closing time, so the latest eligible option is the library-hours
+    cap for this slot.
+    """
+    if not available_ends:
+        return None
+    ideal_mins = hhmm_to_minutes(ideal_end_hhmm)
+    eligible = [e for e in available_ends if hhmm_to_minutes(e) <= ideal_mins]
+    if not eligible:
+        return None
+    if ideal_end_hhmm in eligible:
+        pick = ideal_end_hhmm
+    else:
+        pick = max(eligible, key=hhmm_to_minutes)
+    if booking_hours_from_window(start_hhmm, pick) + 1e-9 < min_hours:
+        return None
+    return pick
+
+
+def find_room_slot(page, room_name: str, title_frag: str):
+    """Return a timeline availability dict for room+start, or None."""
     availability = list_timeline_availability(page) or []
-    hit = next(
+    return next(
         (
             a
             for a in availability
@@ -151,8 +227,19 @@ def room_supports_window(page, room_name: str, title_frag: str, end_hhmm: str) -
         ),
         None,
     )
+
+
+def resolve_window_for_room(page, room_name: str, window: tuple) -> tuple | None:
+    """
+    Resolve an ideal window against live LibCal availability + library hours.
+
+    Returns an adjusted window (title, start, actual_end, label) or None when
+    the start slot is missing or the longest library-hours end is too short.
+    """
+    title_frag, start_hhmm, ideal_end_hhmm, ideal_label = window
+    hit = find_room_slot(page, room_name, title_frag)
     if hit is None:
-        return False
+        return None
 
     try:
         slot = page.locator("a.s-lc-eq-avail").nth(hit["index"])
@@ -163,102 +250,207 @@ def room_supports_window(page, room_name: str, title_frag: str, end_hhmm: str) -
 
         end_select = page.locator("select.b-end-date")
         end_select.wait_for(state="visible", timeout=3000)
-        end_value = end_select.evaluate(
-            """(sel, want) => {
-                for (let i = 0; i < sel.options.length; i++) {
-                    const v = (sel.options[i].value || '');
-                    if (v.indexOf(want) !== -1) return v;
-                }
-                return null;
-            }""",
-            end_hhmm,
+        available_ends = list_end_option_hhmm(page)
+        actual_end = pick_end_within_library_hours(
+            available_ends, start_hhmm, ideal_end_hhmm
         )
-        ok = bool(end_value and end_hhmm in end_value)
+        if not actual_end:
+            return None
+
+        label = format_window_label(start_hhmm, actual_end)
+        if actual_end != ideal_end_hhmm:
+            print(
+                f"    {room_name} {title_frag}: library hours / availability "
+                f"cap end at {actual_end} (ideal {ideal_end_hhmm}; was {ideal_label})"
+            )
+        return (title_frag, start_hhmm, actual_end, label)
     except Exception:
-        ok = False
+        return None
     finally:
         clear_selected_slot(page)
         time.sleep(0.2)
 
-    return ok
+
+def room_supports_window(page, room_name: str, title_frag: str, end_hhmm: str) -> bool:
+    """True if room can be booked at title_frag for at least MIN_BOOKING_HOURS within library hours."""
+    start_hhmm = title_frag_to_start_hhmm(title_frag)
+    resolved = resolve_window_for_room(
+        page,
+        room_name,
+        (title_frag, start_hhmm, end_hhmm, format_window_label(start_hhmm, end_hhmm)),
+    )
+    return resolved is not None
+
+
+def title_frag_to_start_hhmm(title_frag: str) -> str:
+    """Map LibCal header labels like '4:00pm' to 24h HH:MM."""
+    text = (title_frag or "").strip().lower().replace(" ", "")
+    match = re.match(r"^(\d{1,2}):(\d{2})(am|pm)$", text)
+    if not match:
+        return "00:00"
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    suffix = match.group(3)
+    if suffix == "pm" and hour != 12:
+        hour += 12
+    if suffix == "am" and hour == 12:
+        hour = 0
+    return f"{hour:02d}:{minute:02d}"
 
 
 def room_supports_all_windows(page, room_name: str, windows: list[tuple]) -> bool:
-    for title_frag, _, end_hhmm, time_label in windows:
-        if not room_supports_window(page, room_name, title_frag, end_hhmm):
-            print(f"    {room_name}: missing {time_label}")
+    for window in windows:
+        if resolve_window_for_room(page, room_name, window) is None:
+            print(f"    {room_name}: missing {window[3]}")
             return False
     return True
 
 
-def discover_target_room(page, windows: list[tuple]) -> tuple[str | None, list[tuple]]:
+def ordered_cap10_rooms(rooms: list[str]) -> list[str]:
+    """Preference order, with TARGET_ROOM (if set and on the grid) tried first."""
+    ordered = sorted(rooms, key=lambda r: (room_preference_rank(r), r))
+    forced = os.environ.get("TARGET_ROOM", "").strip()
+    if not forced:
+        return ordered
+    forced_match = next((r for r in ordered if rooms_match(r, forced)), None)
+    if not forced_match:
+        print(f"TARGET_ROOM={forced} not on grid; using preference order.")
+        return ordered
+    return [forced_match] + [r for r in ordered if not rooms_match(r, forced_match)]
+
+
+def assign_windows_from_support(
+    windows: list[tuple],
+    rooms: list[str],
+    support: dict[str, list[tuple | None]],
+) -> list[tuple[str, tuple]]:
     """
-    Pick the best capacity-10 room for 12pm–10pm coverage.
-    Returns (room_name, windows_to_book) where windows_to_book is a subset of windows.
+    Pure planner: support[room] is parallel to ideal windows (resolved or None).
+    rooms must already be in preference order (TARGET_ROOM first when set).
     """
-    rooms = cap10_rooms_on_grid(page)
+    n = len(windows)
+
+    def covered_count(room: str) -> int:
+        return sum(1 for slot in support.get(room, []) if slot is not None)
+
+    for room in rooms:
+        slots = support.get(room, [])
+        if len(slots) == n and all(slot is not None for slot in slots):
+            print(f"Selected {room} — full-day coverage available (library-hours adjusted).")
+            return [(room, slot) for slot in slots if slot is not None]
+
+    print("No single cap-10 room covers every window — assigning per window with fallbacks...")
+
+    primary = next((r for r in rooms if covered_count(r) > 0), None)
+    assignments: list[tuple[str, tuple] | None] = [None] * n
+
+    if primary:
+        for index, resolved in enumerate(support[primary]):
+            if resolved is not None:
+                assignments[index] = (primary, resolved)
+        print(
+            f"Primary {primary}: "
+            + ", ".join(slot[3] for slot in support[primary] if slot)
+        )
+
+    for index, ideal in enumerate(windows):
+        if assignments[index] is not None:
+            continue
+        candidates = [
+            r for r in rooms
+            if index < len(support.get(r, [])) and support[r][index] is not None
+        ]
+        if not candidates:
+            print(f"No cap-10 room available for {ideal[3]}.")
+            continue
+
+        def candidate_key(room_name: str) -> tuple:
+            already_used = any(
+                slot and slot[0] == room_name for slot in assignments
+            )
+            return (0 if already_used else 1, room_preference_rank(room_name), room_name)
+
+        pick = sorted(candidates, key=candidate_key)[0]
+        resolved = support[pick][index]
+        assignments[index] = (pick, resolved)
+        print(f"Fallback {pick} for {resolved[3]}")
+
+    planned = [slot for slot in assignments if slot is not None]
+    if planned:
+        summary = ", ".join(f"{room} {window[3]}" for room, window in planned)
+        print(f"Plan: {summary}")
+    return planned
+
+
+def plan_room_assignments(page, windows: list[tuple]) -> list[tuple[str, tuple]]:
+    """
+    Assign each coverage window to a capacity-10 large study room.
+
+    Prefers one room for the full day (TARGET_ROOM / 360H / 360F first). When the
+    preferred room only covers part of the day, keeps those windows on that room
+    and fills remaining windows from other large rooms.
+
+    End times are shortened to whatever LibCal allows (library hours / remaining
+    availability) instead of requiring the ideal 4h/2h blocks.
+    """
+    rooms = ordered_cap10_rooms(cap10_rooms_on_grid(page))
     if not rooms:
         print("No capacity-10 rooms on the grid for this date.")
-        return None, []
+        return []
 
-    print(f"Scanning {len(rooms)} cap-10 room(s) for full 12pm–10pm availability...")
+    print(f"Scanning {len(rooms)} cap-10 room(s) for coverage (library-hours aware)...")
     print(f"Priority: {', '.join(PREFERRED_ROOMS)}, then other cap-10 large study rooms.")
+
+    support: dict[str, list[tuple | None]] = {}
     for room in rooms:
-        print(f"  Checking {room}...")
-        if room_supports_all_windows(page, room, windows):
-            print(f"Selected {room} — full 12pm–10pm available.")
-            return room, list(windows)
+        resolved_slots: list[tuple | None] = []
+        for window in windows:
+            resolved_slots.append(resolve_window_for_room(page, room, window))
+        support[room] = resolved_slots
+        labels = ", ".join(slot[3] for slot in resolved_slots if slot) or "none"
+        print(f"  {room}: {labels}")
 
-    print("No cap-10 room has full 12pm–10pm. Picking room with the most slots...")
-    best_room = None
-    best_count = 0
-    best_windows: list[tuple] = []
-    for room in rooms:
-        available = [
-            w
-            for w in windows
-            if room_supports_window(page, room, w[0], w[2])
-        ]
-        count = len(available)
-        if count == 0:
-            continue
-        if (
-            best_room is None
-            or count > best_count
-            or (
-                count == best_count
-                and room_preference_rank(room) < room_preference_rank(best_room)
-            )
-        ):
-            best_room, best_count, best_windows = room, count, available
+    return assign_windows_from_support(windows, rooms, support)
 
-    if best_room:
-        print(f"Selected {best_room} — {best_count}/{len(windows)} window(s) available.")
-        return best_room, best_windows
 
-    return None, []
+def discover_target_room(page, windows: list[tuple]) -> tuple[str | None, list[tuple]]:
+    """
+    Compatibility wrapper: primary room plus the windows assigned to it.
+    Prefer plan_room_assignments() for multi-room fallback coverage.
+    """
+    planned = plan_room_assignments(page, windows)
+    if not planned:
+        return None, []
+    primary_room = planned[0][0]
+    primary_windows = [window for room, window in planned if rooms_match(room, primary_room)]
+    return primary_room, primary_windows
+
+
+def discover_assignments_for_account(account, windows: list[tuple]) -> list[tuple[str, tuple]]:
+    """Open LibCal on the target date and plan per-window room assignments."""
+    from browser_session import open_account_context
+
+    with open_account_context(account) as (_p, _browser, context):
+        page = context.new_page()
+        page.goto(BASE_URL, wait_until="networkidle")
+        ensure_logged_in(page, account)
+        if is_login_page(page):
+            print(f"Session not authenticated for {account.id} — run ./sign-in.sh {account.id}")
+            return []
+        advance_days(page, DAYS_AHEAD)
+        page.wait_for_load_state("networkidle")
+        time.sleep(1.5)
+        return plan_room_assignments(page, windows)
 
 
 def discover_target_room_for_account(account, windows: list[tuple]) -> tuple[str | None, list[tuple]]:
     """Open LibCal on the target date and discover the best cap-10 room."""
-    profile_dir = account.profile_dir()
-    os.makedirs(profile_dir, exist_ok=True)
-
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=profile_dir,
-            headless=RUN_HEADLESS,
-            args=["--start-maximized"] if not RUN_HEADLESS else [],
-        )
-        page = context.new_page()
-        page.goto(BASE_URL, wait_until="networkidle")
-        ensure_logged_in(page, account)
-        advance_days(page, DAYS_AHEAD)
-        page.wait_for_load_state("networkidle")
-        time.sleep(1.5)
-        result = discover_target_room(page, windows)
-        context.close()
-    return result
+    planned = discover_assignments_for_account(account, windows)
+    if not planned:
+        return None, []
+    primary_room = planned[0][0]
+    primary_windows = [window for room, window in planned if rooms_match(room, primary_room)]
+    return primary_room, primary_windows
 
 def get_2fa_from_imessage(sender_filter: str = UCF_2FA_SENDER, max_age_seconds: int = 120) -> str:
     """
@@ -418,87 +610,80 @@ def add_booking_to_calendar(
 ) -> bool:
     """
     Create a Google Calendar event for the study room booking.
-    Requires credentials.json and one-time OAuth (token.json) in the project folder.
+    Prefers config/service-account.json + STUDY_ROOMS_CALENDAR_ID; falls back to OAuth.
     """
     print("Attempting to add event to Google Calendar...")
     try:
-        from google.auth.transport.requests import Request
-        from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
         from googleapiclient.discovery import build
+        from shared.config import STUDY_ROOMS_CALENDAR_ID
+        from shared.google_auth import get_calendar_credentials
     except ImportError as e:
-        print("Google Calendar skipped: install optional packages: pip install google-auth-oauthlib google-auth-httplib2 google-api-python-client")
-        return False
-
-    SCOPES = ["https://www.googleapis.com/auth/calendar"]
-    creds = None
-    token_path = GOOGLE_TOKEN_FILE
-    creds_path = GOOGLE_CREDENTIALS_FILE
-
-    if not os.path.exists(creds_path):
-        print(f"Google Calendar skipped: credentials.json not found at {creds_path}")
+        print(
+            "Google Calendar skipped: install optional packages: "
+            "pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client"
+        )
+        print(f"Import error: {e}")
         return False
 
     try:
-        if os.path.exists(token_path):
-            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
-                creds = flow.run_local_server(port=0)
-            with open(token_path, "w") as f:
-                f.write(creds.to_json())
+        creds = get_calendar_credentials(interactive=not RUN_HEADLESS)
+        if creds is None:
+            print("Google Calendar skipped: no service-account.json or OAuth credentials.")
+            return False
 
-        service = build("calendar", "v3", credentials=creds)
+        service = build("calendar", "v3", credentials=creds, cache_discovery=False)
 
-        calendar_id = None
-        page_token = None
-        while True:
-            calendar_list = service.calendarList().list(pageToken=page_token).execute()
-            for cal in calendar_list.get("items", []):
-                if cal.get("summary") == STUDY_ROOMS_CALENDAR_NAME:
-                    calendar_id = cal["id"]
-                    break
-            else:
-                page_token = calendar_list.get("nextPageToken")
-                if not page_token:
-                    break
-                continue
-            break
+        calendar_id = STUDY_ROOMS_CALENDAR_ID or None
+        if not calendar_id:
+            page_token = None
+            while True:
+                calendar_list = service.calendarList().list(pageToken=page_token).execute()
+                for cal in calendar_list.get("items", []):
+                    if cal.get("summary") == STUDY_ROOMS_CALENDAR_NAME:
+                        calendar_id = cal["id"]
+                        break
+                else:
+                    page_token = calendar_list.get("nextPageToken")
+                    if not page_token:
+                        break
+                    continue
+                break
 
         if not calendar_id:
             print(f"Google Calendar skipped: calendar '{STUDY_ROOMS_CALENDAR_NAME}' not found.")
             return False
 
-        service.calendars().patch(
-            calendarId=calendar_id,
-            body={
-                "summary": STUDY_ROOMS_CALENDAR_NAME,
-                "description": STUDY_ROOMS_CALENDAR_DESCRIPTION,
-            },
-        ).execute()
+        try:
+            service.calendars().patch(
+                calendarId=calendar_id,
+                body={
+                    "summary": STUDY_ROOMS_CALENDAR_NAME,
+                    "description": STUDY_ROOMS_CALENDAR_DESCRIPTION,
+                },
+            ).execute()
+        except Exception:
+            # Service accounts often cannot patch calendar metadata; event insert still works.
+            pass
 
         # UCF is in Eastern; let the timeZone field handle EST/EDT automatically
         start = f"{date_str}T{start_hhmm}:00"
         end = f"{date_str}T{end_hhmm}:00"
         summary = parse_room_name_from_title(room_name)
+        desc_parts = []
+        code = (checkin_code or "").strip()
+        link = unwrap_checkin_link(checkin_link or "")
+        if code:
+            desc_parts.append(f"Check-in Code: {code}")
+        if link:
+            desc_parts.append(f"Check-in link: {link}")
         event = {
             "summary": summary,
             "start": {"dateTime": start, "timeZone": "America/New_York"},
             "end": {"dateTime": end, "timeZone": "America/New_York"},
+            "description": "\n".join(desc_parts),
         }
-        desc_parts = []
-        if checkin_code:
-            desc_parts.append(f"Check-in Code: {checkin_code}")
-        link = unwrap_checkin_link(checkin_link)
-        if link:
-            desc_parts.append(f"Check-in link: {link}")
-        if desc_parts:
-            event["description"] = "\n".join(desc_parts)
         created = service.events().insert(calendarId=calendar_id, body=event).execute()
-        print(f"Google Calendar event created: {created.get('htmlLink', created.get('id', 'ok'))}")
+        print(f"Added Google Calendar event: {created.get('htmlLink') or created.get('id')}")
         return True
     except Exception as e:
         print(f"Google Calendar error: {e}")
@@ -1090,7 +1275,9 @@ def try_book_window(
     """
     Book a cap-10 large study room for a start time through end_hhmm (24h HH:MM).
     If required_room is set, only that room is attempted.
-    Returns (room_name, time_label) on success, or (None, None).
+    When the ideal end is past library hours / availability, books the longest
+    allowed end at or before end_hhmm (at least MIN_BOOKING_HOURS).
+    Returns (room_name, actual_end_hhmm) on success, or (None, None).
     """
     availability = list_timeline_availability(page) or []
     matching = [
@@ -1209,6 +1396,19 @@ def try_book_window(
         except Exception:
             continue
 
+        available_ends = list_end_option_hhmm(page)
+        start_hhmm = title_frag_to_start_hhmm(title_frag)
+        chosen_end = pick_end_within_library_hours(available_ends, start_hhmm, end_hhmm)
+        if not chosen_end:
+            print(
+                f"Skipping {room_for_this_slot}: no library-hours end "
+                f">= {MIN_BOOKING_HOURS:g}h for {title_frag} (ideal {end_hhmm})."
+            )
+            if not clear_selected_slot(page):
+                print("Could not find the remove/garbage button; cannot try next room.")
+                return None, None
+            continue
+
         end_value = end_select.evaluate(
             """(sel, want) => {
                 for (let i = 0; i < sel.options.length; i++) {
@@ -1217,7 +1417,7 @@ def try_book_window(
                 }
                 return null;
             }""",
-            end_hhmm,
+            chosen_end,
         )
 
         if end_value:
@@ -1226,9 +1426,16 @@ def try_book_window(
             selected = end_select.evaluate(
                 "sel => (sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].value) || ''"
             )
-            if end_hhmm in (selected or ""):
-                print(f"Selected {room_for_this_slot} for {time_label}.")
-                return room_for_this_slot, time_label
+            if chosen_end in (selected or ""):
+                booked_label = format_window_label(start_hhmm, chosen_end)
+                if chosen_end != end_hhmm:
+                    print(
+                        f"Selected {room_for_this_slot} for {booked_label} "
+                        f"(library hours capped; ideal end was {end_hhmm})."
+                    )
+                else:
+                    print(f"Selected {room_for_this_slot} for {booked_label}.")
+                return room_for_this_slot, chosen_end
 
         if not clear_selected_slot(page):
             print("Could not find the remove/garbage button; cannot try next room.")
@@ -1352,26 +1559,23 @@ def book_one_window(
     Book one time window on target_date using the given account.
     Returns (success, room_name).
     """
+    from browser_session import open_account_context
+
     title_frag, start_hhmm, end_hhmm, time_label = window
-    profile_dir = account.profile_dir()
-    os.makedirs(profile_dir, exist_ok=True)
-
     booked_room = ""
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=profile_dir,
-            headless=RUN_HEADLESS,
-            args=["--start-maximized"] if not RUN_HEADLESS else [],
-        )
-        page = context.new_page()
 
+    with open_account_context(account) as (_p, _browser, context):
+        page = context.new_page()
         page.goto(BASE_URL, wait_until="networkidle")
         ensure_logged_in(page, account)
+        if is_login_page(page):
+            print(f"Session not authenticated for {account.id} — run ./sign-in.sh {account.id}")
+            return False, ""
         advance_days(page, DAYS_AHEAD)
         page.wait_for_load_state("networkidle")
         time.sleep(1.5)
 
-        room, _ = try_book_window(
+        room, actual_end = try_book_window(
             page,
             title_frag,
             end_hhmm,
@@ -1380,13 +1584,14 @@ def book_one_window(
         )
         if not room:
             print(f"No large study room available for {time_label}.")
-            context.close()
             return False, ""
 
         booked_room = room
+        if actual_end:
+            end_hhmm = actual_end
+            time_label = format_window_label(start_hhmm, end_hhmm)
         if not submit_booking_on_page(page, account):
             wait_for_user("Press Enter to close...")
-            context.close()
             return False, booked_room
 
         room_for_calendar = booked_room
@@ -1415,7 +1620,6 @@ def book_one_window(
         close_secs = 15 if PIPELINE_TEST else CLOSE_AFTER_SECONDS
         print(f"Booked {booked_room} for {time_label}. Closing in {close_secs}s...")
         time.sleep(close_secs)
-        context.close()
 
     return True, booked_room
 
@@ -1439,7 +1643,7 @@ def book_room():
     if PIPELINE_TEST:
         print("PIPELINE_TEST=1: searching multiple time windows on large study rooms...")
     else:
-        print("Full-day booking: 12pm–10pm on one cap-10 room, rotating accounts.")
+        print("Full-day booking: 12pm–10pm on cap-10 rooms, library-hours aware.")
 
     scan_account = accounts[0]
     if forced_id:
@@ -1448,16 +1652,18 @@ def book_room():
                 scan_account = account
                 break
 
-    print(f"\nDiscovering best cap-10 room ({scan_account.id})...")
-    target_room, windows_to_book = discover_target_room_for_account(scan_account, windows)
-    if not target_room or not windows_to_book:
+    print(f"\nPlanning cap-10 coverage ({scan_account.id})...")
+    assignments = discover_assignments_for_account(scan_account, windows)
+    if not assignments:
         print("No capacity-10 large study room available for this date.")
         return
 
-    print(f"Booking {target_room} for: {', '.join(w[3] for w in windows_to_book)}")
+    plan_summary = ", ".join(f"{room} {window[3]}" for room, window in assignments)
+    print(f"Booking plan: {plan_summary}")
 
     booked_count = 0
-    for title_frag, start_hhmm, end_hhmm, time_label in windows_to_book:
+    booked_labels: list[str] = []
+    for target_room, (title_frag, start_hhmm, end_hhmm, time_label) in assignments:
         hours = booking_hours_from_window(start_hhmm, end_hhmm)
         account = pick_account(
             accounts,
@@ -1481,11 +1687,17 @@ def book_room():
             record_booking(account, target_date, hours)
             used_account_ids.add(account.id)
             booked_count += 1
+            booked_labels.append(f"{room or target_room} {time_label}")
             print(f"Recorded {hours:g}h for {account.id} on {target_date}.")
         else:
             print(f"Failed to book {time_label} on {target_room}.")
 
-    print(f"\nDone. {booked_count}/{len(windows_to_book)} window(s) booked for {target_date} in {target_room}.")
+    if booked_labels:
+        print(f"\nDone. {booked_count}/{len(assignments)} window(s) booked for {target_date}:")
+        for label in booked_labels:
+            print(f"  - {label}")
+    else:
+        print(f"\nDone. 0/{len(assignments)} window(s) booked for {target_date}.")
     if booked_count < len(windows) and len(accounts) < 3:
         print(f"Note: full 12pm–10pm coverage needs 3 accounts (you have {len(accounts)}).")
 
