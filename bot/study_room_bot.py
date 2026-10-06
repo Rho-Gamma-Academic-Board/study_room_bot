@@ -191,56 +191,112 @@ def room_supports_all_windows(page, room_name: str, windows: list[tuple]) -> boo
     return True
 
 
-def discover_target_room(page, windows: list[tuple]) -> tuple[str | None, list[tuple]]:
+def ordered_cap10_rooms(rooms: list[str]) -> list[str]:
+    """Preference order, with TARGET_ROOM (if set and on the grid) tried first."""
+    ordered = sorted(rooms, key=lambda r: (room_preference_rank(r), r))
+    forced = os.environ.get("TARGET_ROOM", "").strip()
+    if not forced:
+        return ordered
+    forced_match = next((r for r in ordered if rooms_match(r, forced)), None)
+    if not forced_match:
+        print(f"TARGET_ROOM={forced} not on grid; using preference order.")
+        return ordered
+    return [forced_match] + [r for r in ordered if not rooms_match(r, forced_match)]
+
+
+def assign_windows_from_support(
+    windows: list[tuple],
+    rooms: list[str],
+    support: dict[str, list[tuple]],
+) -> list[tuple[str, tuple]]:
     """
-    Pick the best capacity-10 room for 12pm–10pm coverage.
-    Returns (room_name, windows_to_book) where windows_to_book is a subset of windows.
+    Pure planner: given which rooms support which windows, return assignments.
+    rooms must already be in preference order (TARGET_ROOM first when set).
     """
-    rooms = cap10_rooms_on_grid(page)
+    for room in rooms:
+        if len(support.get(room, [])) == len(windows):
+            print(f"Selected {room} — full 12pm–10pm available.")
+            return [(room, w) for w in windows]
+
+    print("No single cap-10 room covers the full day — assigning per window with fallbacks...")
+
+    primary = next((r for r in rooms if support.get(r)), None)
+    assignments: list[tuple[str, tuple] | None] = [None] * len(windows)
+
+    if primary:
+        for window in support[primary]:
+            assignments[windows.index(window)] = (primary, window)
+        print(
+            f"Primary {primary}: "
+            + ", ".join(w[3] for w in support[primary])
+        )
+
+    for index, window in enumerate(windows):
+        if assignments[index] is not None:
+            continue
+        candidates = [r for r in rooms if window in support.get(r, [])]
+        if not candidates:
+            print(f"No cap-10 room available for {window[3]}.")
+            continue
+
+        def candidate_key(room_name: str) -> tuple:
+            already_used = any(
+                slot and slot[0] == room_name for slot in assignments
+            )
+            return (0 if already_used else 1, room_preference_rank(room_name), room_name)
+
+        pick = sorted(candidates, key=candidate_key)[0]
+        assignments[index] = (pick, window)
+        print(f"Fallback {pick} for {window[3]}")
+
+    planned = [slot for slot in assignments if slot is not None]
+    if planned:
+        summary = ", ".join(f"{room} {window[3]}" for room, window in planned)
+        print(f"Plan: {summary}")
+    return planned
+
+
+def plan_room_assignments(page, windows: list[tuple]) -> list[tuple[str, tuple]]:
+    """
+    Assign each 12pm–10pm window to a capacity-10 large study room.
+
+    Prefers one room for the full day (TARGET_ROOM / 360H / 360F first). When the
+    preferred room only covers part of the day, keeps those windows on that room
+    and fills remaining windows from other large rooms.
+    """
+    rooms = ordered_cap10_rooms(cap10_rooms_on_grid(page))
     if not rooms:
         print("No capacity-10 rooms on the grid for this date.")
-        return None, []
+        return []
 
-    print(f"Scanning {len(rooms)} cap-10 room(s) for full 12pm–10pm availability...")
+    print(f"Scanning {len(rooms)} cap-10 room(s) for 12pm–10pm coverage...")
     print(f"Priority: {', '.join(PREFERRED_ROOMS)}, then other cap-10 large study rooms.")
+
+    support: dict[str, list[tuple]] = {}
     for room in rooms:
-        print(f"  Checking {room}...")
-        if room_supports_all_windows(page, room, windows):
-            print(f"Selected {room} — full 12pm–10pm available.")
-            return room, list(windows)
+        available = [w for w in windows if room_supports_window(page, room, w[0], w[2])]
+        support[room] = available
+        labels = ", ".join(w[3] for w in available) or "none"
+        print(f"  {room}: {labels}")
 
-    print("No cap-10 room has full 12pm–10pm. Picking room with the most slots...")
-    best_room = None
-    best_count = 0
-    best_windows: list[tuple] = []
-    for room in rooms:
-        available = [
-            w
-            for w in windows
-            if room_supports_window(page, room, w[0], w[2])
-        ]
-        count = len(available)
-        if count == 0:
-            continue
-        if (
-            best_room is None
-            or count > best_count
-            or (
-                count == best_count
-                and room_preference_rank(room) < room_preference_rank(best_room)
-            )
-        ):
-            best_room, best_count, best_windows = room, count, available
-
-    if best_room:
-        print(f"Selected {best_room} — {best_count}/{len(windows)} window(s) available.")
-        return best_room, best_windows
-
-    return None, []
+    return assign_windows_from_support(windows, rooms, support)
 
 
-def discover_target_room_for_account(account, windows: list[tuple]) -> tuple[str | None, list[tuple]]:
-    """Open LibCal on the target date and discover the best cap-10 room."""
+def discover_target_room(page, windows: list[tuple]) -> tuple[str | None, list[tuple]]:
+    """
+    Compatibility wrapper: primary room plus the windows assigned to it.
+    Prefer plan_room_assignments() for multi-room fallback coverage.
+    """
+    planned = plan_room_assignments(page, windows)
+    if not planned:
+        return None, []
+    primary_room = planned[0][0]
+    primary_windows = [window for room, window in planned if rooms_match(room, primary_room)]
+    return primary_room, primary_windows
+
+
+def discover_assignments_for_account(account, windows: list[tuple]) -> list[tuple[str, tuple]]:
+    """Open LibCal on the target date and plan per-window room assignments."""
     profile_dir = account.profile_dir()
     os.makedirs(profile_dir, exist_ok=True)
 
@@ -256,9 +312,19 @@ def discover_target_room_for_account(account, windows: list[tuple]) -> tuple[str
         advance_days(page, DAYS_AHEAD)
         page.wait_for_load_state("networkidle")
         time.sleep(1.5)
-        result = discover_target_room(page, windows)
+        result = plan_room_assignments(page, windows)
         context.close()
     return result
+
+
+def discover_target_room_for_account(account, windows: list[tuple]) -> tuple[str | None, list[tuple]]:
+    """Open LibCal on the target date and discover the best cap-10 room."""
+    planned = discover_assignments_for_account(account, windows)
+    if not planned:
+        return None, []
+    primary_room = planned[0][0]
+    primary_windows = [window for room, window in planned if rooms_match(room, primary_room)]
+    return primary_room, primary_windows
 
 def get_2fa_from_imessage(sender_filter: str = UCF_2FA_SENDER, max_age_seconds: int = 120) -> str:
     """
@@ -1439,7 +1505,7 @@ def book_room():
     if PIPELINE_TEST:
         print("PIPELINE_TEST=1: searching multiple time windows on large study rooms...")
     else:
-        print("Full-day booking: 12pm–10pm on one cap-10 room, rotating accounts.")
+        print("Full-day booking: 12pm–10pm on cap-10 rooms, with multi-room fallback.")
 
     scan_account = accounts[0]
     if forced_id:
@@ -1448,16 +1514,18 @@ def book_room():
                 scan_account = account
                 break
 
-    print(f"\nDiscovering best cap-10 room ({scan_account.id})...")
-    target_room, windows_to_book = discover_target_room_for_account(scan_account, windows)
-    if not target_room or not windows_to_book:
+    print(f"\nPlanning cap-10 coverage ({scan_account.id})...")
+    assignments = discover_assignments_for_account(scan_account, windows)
+    if not assignments:
         print("No capacity-10 large study room available for this date.")
         return
 
-    print(f"Booking {target_room} for: {', '.join(w[3] for w in windows_to_book)}")
+    plan_summary = ", ".join(f"{room} {window[3]}" for room, window in assignments)
+    print(f"Booking plan: {plan_summary}")
 
     booked_count = 0
-    for title_frag, start_hhmm, end_hhmm, time_label in windows_to_book:
+    booked_labels: list[str] = []
+    for target_room, (title_frag, start_hhmm, end_hhmm, time_label) in assignments:
         hours = booking_hours_from_window(start_hhmm, end_hhmm)
         account = pick_account(
             accounts,
@@ -1481,11 +1549,17 @@ def book_room():
             record_booking(account, target_date, hours)
             used_account_ids.add(account.id)
             booked_count += 1
+            booked_labels.append(f"{room or target_room} {time_label}")
             print(f"Recorded {hours:g}h for {account.id} on {target_date}.")
         else:
             print(f"Failed to book {time_label} on {target_room}.")
 
-    print(f"\nDone. {booked_count}/{len(windows_to_book)} window(s) booked for {target_date} in {target_room}.")
+    if booked_labels:
+        print(f"\nDone. {booked_count}/{len(assignments)} window(s) booked for {target_date}:")
+        for label in booked_labels:
+            print(f"  - {label}")
+    else:
+        print(f"\nDone. 0/{len(assignments)} window(s) booked for {target_date}.")
     if booked_count < len(windows) and len(accounts) < 3:
         print(f"Note: full 12pm–10pm coverage needs 3 accounts (you have {len(accounts)}).")
 
