@@ -669,20 +669,18 @@ def add_booking_to_calendar(
         start = f"{date_str}T{start_hhmm}:00"
         end = f"{date_str}T{end_hhmm}:00"
         summary = parse_room_name_from_title(room_name)
+        desc_parts = []
+        code = (checkin_code or "").strip()
+        link = unwrap_checkin_link(checkin_link or "")
+        if code:
+            desc_parts.append(f"Check-in Code: {code}")
+        if link:
+            desc_parts.append(f"Check-in link: {link}")
         event = {
             "summary": summary,
-            "location": f"UCF John C. Hitt Library — {summary}",
-            "description": "\n".join(
-                part
-                for part in [
-                    f"Check-in code: {checkin_code}" if checkin_code else "",
-                    checkin_link or "",
-                    f"Time: {time_label}",
-                ]
-                if part
-            ),
             "start": {"dateTime": start, "timeZone": "America/New_York"},
             "end": {"dateTime": end, "timeZone": "America/New_York"},
+            "description": "\n".join(desc_parts),
         }
         created = service.events().insert(calendarId=calendar_id, body=event).execute()
         print(f"Added Google Calendar event: {created.get('htmlLink') or created.get('id')}")
