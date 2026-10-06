@@ -7,11 +7,20 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 
-from shared.paths import ACCOUNTS_DIR, CREDS_FILE, PROFILES_DIR, USAGE_FILE, as_str
+from shared.paths import (
+    ACCOUNTS_DIR,
+    CREDS_FILE,
+    PROFILES_DIR,
+    PROJECT_ROOT,
+    STORAGE_STATES_DIR,
+    USAGE_FILE,
+    as_str,
+)
 
 ACCOUNTS_DIR = as_str(ACCOUNTS_DIR)
 USAGE_FILE = as_str(USAGE_FILE)
 PROFILES_DIR = as_str(PROFILES_DIR)
+STORAGE_STATES_DIR = as_str(STORAGE_STATES_DIR)
 _LEGACY_CREDS = as_str(CREDS_FILE)
 
 # LibCal large study room limits (per patron)
@@ -44,6 +53,7 @@ class BookingAccount:
     ucf_id: str
     public_name: str
     outlook_email: str = ""
+    storage_state: str = ""
 
     @property
     def outlook(self) -> str:
@@ -59,6 +69,23 @@ class BookingAccount:
 
     def profile_dir(self) -> str:
         return os.path.join(PROFILES_DIR, self.id)
+
+    def storage_state_path(self) -> str:
+        """Absolute path to Playwright storageState JSON, or empty if unused."""
+        raw = (self.storage_state or "").strip()
+        if not raw:
+            default = os.path.join(STORAGE_STATES_DIR, f"{self.id}.json")
+            return default if os.path.exists(default) else ""
+        if os.path.isabs(raw):
+            return raw if os.path.exists(raw) else ""
+        candidate = os.path.join(as_str(PROJECT_ROOT), raw)
+        if os.path.exists(candidate):
+            return candidate
+        alt = os.path.join(STORAGE_STATES_DIR, os.path.basename(raw))
+        return alt if os.path.exists(alt) else ""
+
+    def uses_storage_state(self) -> bool:
+        return bool(self.storage_state_path())
 
 
 def _parse_env_file(path: str) -> dict[str, str]:
@@ -80,18 +107,31 @@ def _account_from_env(path: str) -> BookingAccount | None:
     email = data.get("UCF_EMAIL", "")
     password = data.get("UCF_PASSWORD", "")
     ucf_id = data.get("UCF_ID", "")
-    if not email or not password or not ucf_id:
+    nid = data.get("UCF_NID", "")
+    if not email and nid:
+        email = f"{nid}@ucf.edu"
+    if not ucf_id and nid:
+        ucf_id = nid
+    # Password optional when a saved Playwright storage state / profile exists.
+    if not email or not ucf_id:
         return None
     account_id = os.path.splitext(os.path.basename(path))[0]
     if account_id.startswith("example"):
+        return None
+    storage_state = data.get("STORAGE_STATE", "")
+    default_state = os.path.join(STORAGE_STATES_DIR, f"{account_id}.json")
+    if not storage_state and os.path.exists(default_state):
+        storage_state = f"data/storage_states/{account_id}.json"
+    if not password and not storage_state and not os.path.exists(default_state):
         return None
     return BookingAccount(
         id=account_id,
         ucf_email=email,
         ucf_password=password,
         ucf_id=ucf_id,
-        public_name=data.get("PUBLIC_NAME", "Student"),
+        public_name=data.get("PUBLIC_NAME", data.get("GROUP_NAME", "Student")),
         outlook_email=data.get("OUTLOOK_EMAIL", ""),
+        storage_state=storage_state,
     )
 
 

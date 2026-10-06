@@ -10,6 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 ACCOUNTS_DIR = DATA_DIR / "accounts"
 PROFILES_DIR = DATA_DIR / "profiles"
+STORAGE_STATES_DIR = DATA_DIR / "storage_states"
 USAGE_FILE = DATA_DIR / "account_usage.json"
 
 CONFIG_DIR = PROJECT_ROOT / "config"
@@ -30,6 +31,7 @@ def ensure_data_dirs() -> None:
     """Create runtime directories if missing."""
     ACCOUNTS_DIR.mkdir(parents=True, exist_ok=True)
     PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+    STORAGE_STATES_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
 

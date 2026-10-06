@@ -428,24 +428,19 @@ def discover_target_room(page, windows: list[tuple]) -> tuple[str | None, list[t
 
 def discover_assignments_for_account(account, windows: list[tuple]) -> list[tuple[str, tuple]]:
     """Open LibCal on the target date and plan per-window room assignments."""
-    profile_dir = account.profile_dir()
-    os.makedirs(profile_dir, exist_ok=True)
+    from browser_session import open_account_context
 
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=profile_dir,
-            headless=RUN_HEADLESS,
-            args=["--start-maximized"] if not RUN_HEADLESS else [],
-        )
+    with open_account_context(account) as (_p, _browser, context):
         page = context.new_page()
         page.goto(BASE_URL, wait_until="networkidle")
         ensure_logged_in(page, account)
+        if is_login_page(page):
+            print(f"Session not authenticated for {account.id} — run ./sign-in.sh {account.id}")
+            return []
         advance_days(page, DAYS_AHEAD)
         page.wait_for_load_state("networkidle")
         time.sleep(1.5)
-        result = plan_room_assignments(page, windows)
-        context.close()
-    return result
+        return plan_room_assignments(page, windows)
 
 
 def discover_target_room_for_account(account, windows: list[tuple]) -> tuple[str | None, list[tuple]]:
@@ -615,67 +610,60 @@ def add_booking_to_calendar(
 ) -> bool:
     """
     Create a Google Calendar event for the study room booking.
-    Requires credentials.json and one-time OAuth (token.json) in the project folder.
+    Prefers config/service-account.json + STUDY_ROOMS_CALENDAR_ID; falls back to OAuth.
     """
     print("Attempting to add event to Google Calendar...")
     try:
-        from google.auth.transport.requests import Request
-        from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
         from googleapiclient.discovery import build
+        from shared.config import STUDY_ROOMS_CALENDAR_ID
+        from shared.google_auth import get_calendar_credentials
     except ImportError as e:
-        print("Google Calendar skipped: install optional packages: pip install google-auth-oauthlib google-auth-httplib2 google-api-python-client")
-        return False
-
-    SCOPES = ["https://www.googleapis.com/auth/calendar"]
-    creds = None
-    token_path = GOOGLE_TOKEN_FILE
-    creds_path = GOOGLE_CREDENTIALS_FILE
-
-    if not os.path.exists(creds_path):
-        print(f"Google Calendar skipped: credentials.json not found at {creds_path}")
+        print(
+            "Google Calendar skipped: install optional packages: "
+            "pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client"
+        )
+        print(f"Import error: {e}")
         return False
 
     try:
-        if os.path.exists(token_path):
-            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
-                creds = flow.run_local_server(port=0)
-            with open(token_path, "w") as f:
-                f.write(creds.to_json())
+        creds = get_calendar_credentials(interactive=not RUN_HEADLESS)
+        if creds is None:
+            print("Google Calendar skipped: no service-account.json or OAuth credentials.")
+            return False
 
-        service = build("calendar", "v3", credentials=creds)
+        service = build("calendar", "v3", credentials=creds, cache_discovery=False)
 
-        calendar_id = None
-        page_token = None
-        while True:
-            calendar_list = service.calendarList().list(pageToken=page_token).execute()
-            for cal in calendar_list.get("items", []):
-                if cal.get("summary") == STUDY_ROOMS_CALENDAR_NAME:
-                    calendar_id = cal["id"]
-                    break
-            else:
-                page_token = calendar_list.get("nextPageToken")
-                if not page_token:
-                    break
-                continue
-            break
+        calendar_id = STUDY_ROOMS_CALENDAR_ID or None
+        if not calendar_id:
+            page_token = None
+            while True:
+                calendar_list = service.calendarList().list(pageToken=page_token).execute()
+                for cal in calendar_list.get("items", []):
+                    if cal.get("summary") == STUDY_ROOMS_CALENDAR_NAME:
+                        calendar_id = cal["id"]
+                        break
+                else:
+                    page_token = calendar_list.get("nextPageToken")
+                    if not page_token:
+                        break
+                    continue
+                break
 
         if not calendar_id:
             print(f"Google Calendar skipped: calendar '{STUDY_ROOMS_CALENDAR_NAME}' not found.")
             return False
 
-        service.calendars().patch(
-            calendarId=calendar_id,
-            body={
-                "summary": STUDY_ROOMS_CALENDAR_NAME,
-                "description": STUDY_ROOMS_CALENDAR_DESCRIPTION,
-            },
-        ).execute()
+        try:
+            service.calendars().patch(
+                calendarId=calendar_id,
+                body={
+                    "summary": STUDY_ROOMS_CALENDAR_NAME,
+                    "description": STUDY_ROOMS_CALENDAR_DESCRIPTION,
+                },
+            ).execute()
+        except Exception:
+            # Service accounts often cannot patch calendar metadata; event insert still works.
+            pass
 
         # UCF is in Eastern; let the timeZone field handle EST/EDT automatically
         start = f"{date_str}T{start_hhmm}:00"
@@ -683,19 +671,21 @@ def add_booking_to_calendar(
         summary = parse_room_name_from_title(room_name)
         event = {
             "summary": summary,
+            "location": f"UCF John C. Hitt Library — {summary}",
+            "description": "\n".join(
+                part
+                for part in [
+                    f"Check-in code: {checkin_code}" if checkin_code else "",
+                    checkin_link or "",
+                    f"Time: {time_label}",
+                ]
+                if part
+            ),
             "start": {"dateTime": start, "timeZone": "America/New_York"},
             "end": {"dateTime": end, "timeZone": "America/New_York"},
         }
-        desc_parts = []
-        if checkin_code:
-            desc_parts.append(f"Check-in Code: {checkin_code}")
-        link = unwrap_checkin_link(checkin_link)
-        if link:
-            desc_parts.append(f"Check-in link: {link}")
-        if desc_parts:
-            event["description"] = "\n".join(desc_parts)
         created = service.events().insert(calendarId=calendar_id, body=event).execute()
-        print(f"Google Calendar event created: {created.get('htmlLink', created.get('id', 'ok'))}")
+        print(f"Added Google Calendar event: {created.get('htmlLink') or created.get('id')}")
         return True
     except Exception as e:
         print(f"Google Calendar error: {e}")
@@ -1571,21 +1561,18 @@ def book_one_window(
     Book one time window on target_date using the given account.
     Returns (success, room_name).
     """
+    from browser_session import open_account_context
+
     title_frag, start_hhmm, end_hhmm, time_label = window
-    profile_dir = account.profile_dir()
-    os.makedirs(profile_dir, exist_ok=True)
-
     booked_room = ""
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=profile_dir,
-            headless=RUN_HEADLESS,
-            args=["--start-maximized"] if not RUN_HEADLESS else [],
-        )
-        page = context.new_page()
 
+    with open_account_context(account) as (_p, _browser, context):
+        page = context.new_page()
         page.goto(BASE_URL, wait_until="networkidle")
         ensure_logged_in(page, account)
+        if is_login_page(page):
+            print(f"Session not authenticated for {account.id} — run ./sign-in.sh {account.id}")
+            return False, ""
         advance_days(page, DAYS_AHEAD)
         page.wait_for_load_state("networkidle")
         time.sleep(1.5)
@@ -1599,7 +1586,6 @@ def book_one_window(
         )
         if not room:
             print(f"No large study room available for {time_label}.")
-            context.close()
             return False, ""
 
         booked_room = room
@@ -1608,7 +1594,6 @@ def book_one_window(
             time_label = format_window_label(start_hhmm, end_hhmm)
         if not submit_booking_on_page(page, account):
             wait_for_user("Press Enter to close...")
-            context.close()
             return False, booked_room
 
         room_for_calendar = booked_room
@@ -1637,7 +1622,6 @@ def book_one_window(
         close_secs = 15 if PIPELINE_TEST else CLOSE_AFTER_SECONDS
         print(f"Booked {booked_room} for {time_label}. Closing in {close_secs}s...")
         time.sleep(close_secs)
-        context.close()
 
     return True, booked_room
 
